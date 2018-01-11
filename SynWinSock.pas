@@ -778,7 +778,7 @@ function GetSinIP(const Sin: TVarSin): AnsiString;
 procedure GetSinIPShort(const Sin: TVarSin; var result: shortstring);
 function GetSinPort(const Sin: TVarSin): integer;
 procedure ResolveNameToIP(const Name: AnsiString; Family, SockProtocol, SockType: integer;
-  IPList: TStrings; WillClearIPList: boolean = true);
+  IPList: TStrings; IPListClear: boolean = true);
 function ResolveIPToName(const IP: AnsiString; Family, SockProtocol, SockType: integer): AnsiString;
 function ResolvePort(const Port: AnsiString; Family, SockProtocol, SockType: integer): Word;
 
@@ -1279,7 +1279,7 @@ begin
 end;
 
 procedure ResolveNameToIP(const Name: AnsiString; Family, SockProtocol,
-  SockType: integer; IPList: TStrings; WillClearIPList: boolean = true);
+  SockType: integer; IPList: TStrings; IPListClear: boolean);
 type
   TaPInAddr = array[0..250] of PInAddr;
 var
@@ -1296,7 +1296,7 @@ var
   i: integer;
   InAddr: TInAddr;
 begin
-  if (WillClearIPList) then
+  if IPListClear then
     IPList.Clear;
   if not IsNewApi(Family) then begin
     IP := inet_addr(pointer(Name));
@@ -1506,14 +1506,16 @@ begin
         GetAddrInfo := GetProcAddress(LibHandle, 'getaddrinfo');
         FreeAddrInfo := GetProcAddress(LibHandle, 'freeaddrinfo');
         GetNameInfo := GetProcAddress(LibHandle, 'getnameinfo');
-        SockEnhancedApi := Assigned(GetAddrInfo) and Assigned(FreeAddrInfo) and Assigned(GetNameInfo);
+        SockEnhancedApi := Assigned(GetAddrInfo) and
+          Assigned(FreeAddrInfo) and Assigned(GetNameInfo);
         if not SockEnhancedApi then begin
           LibWship6Handle := LoadLibrary(DLLWship6);
           if LibWship6Handle <> 0 then begin
             GetAddrInfo := GetProcAddress(LibWship6Handle, 'getaddrinfo');
             FreeAddrInfo := GetProcAddress(LibWship6Handle, 'freeaddrinfo');
             GetNameInfo := GetProcAddress(LibWship6Handle, 'getnameinfo');
-            SockWship6Api := Assigned(GetAddrInfo) and Assigned(FreeAddrInfo) and Assigned(GetNameInfo);
+            SockWship6Api := Assigned(GetAddrInfo) and
+              Assigned(FreeAddrInfo) and Assigned(GetNameInfo);
           end;
         end;
         {$endif}
@@ -1529,7 +1531,10 @@ begin
             FreeContextBuffer := GetProcAddress(LibSecurHandle, 'FreeContextBuffer');
             EncryptMessage := GetProcAddress(LibSecurHandle, 'EncryptMessage');
             DecryptMessage := GetProcAddress(LibSecurHandle, 'DecryptMessage');
-            SockSChannelApi := Assigned(AcquireCredentialsHandle) and Assigned(InitializeSecurityContext) and Assigned(QueryContextAttributes) and Assigned(EncryptMessage);
+            SockSChannelApi := Assigned(AcquireCredentialsHandle) and
+              Assigned(InitializeSecurityContext) and
+              Assigned(QueryContextAttributes) and
+              Assigned(EncryptMessage);
           end;
         end;
         result := True;
