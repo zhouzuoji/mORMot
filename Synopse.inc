@@ -478,6 +478,7 @@
     {$ifend}
     {$if CompilerVersion >= 29.0}
       {$define ISDELPHIXE8}
+      {$define HASREFCONST}
     {$ifend}
     {$if CompilerVersion >= 30.0}
       {$define ISDELPHI10}

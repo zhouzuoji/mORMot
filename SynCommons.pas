@@ -14161,9 +14161,18 @@ type
     function FixupIdent(const AText: string): string; override;
     {$endif}
     {$endif}
+    
     /// our custom DispInvoke support subscript access
-    procedure DispInvoke(Dest: PVarData; {$ifdef FPC_VARIANTSETVAR}var{$ELSE}const{$ENDIF} Source: TVarData;
-      ACallDesc: PCallDesc; Params: Pointer); override;
+    {$ifdef FPC_VARIANTSETVAR}
+    procedure DispInvoke(Dest: PVarData; var Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    {$else}
+    {$ifdef ISDELPHIXE3}
+    procedure DispInvoke(Dest: PVarData; [Ref] const Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    {$else}
+    procedure DispInvoke(Dest: PVarData; const Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    {$endif}
+    {$endif}
+
     /// override those two abstract methods for fast getter/setter implementation
     procedure IntGet(var Dest: TVarData; const V: TVarData; Name: PAnsiChar); virtual; abstract;
     procedure IntSet(const V, Value: TVarData; Name: PAnsiChar); virtual; abstract;
@@ -44006,60 +44015,114 @@ end;
 var
   LastDispInvokeType: TSynInvokeableVariantType;
 
+procedure _DispInvokeNoRecursive(Dest: PVarData; const Source: TVarData;
+  CallDesc: PCallDesc; Params: Pointer); cdecl;
+var
+  pSource: PVarData;
+  LHandler: TCustomVariantType;
+  LDest: TVarData;
+  LDestPtr: PVarData;
+begin
+  pSource := @Source;
+  while pSource.VType = varByRef or varVariant do
+    pSource := PVarData(pSource.VPointer);
+
+  // figure out destination temp
+  if Dest = nil then
+    LDestPtr := nil
+  else
+  begin
+    ZeroFill(@LDest);
+    LDestPtr := @LDest;
+  end;
+
+  // attempt it
+  try
+
+    // we only do this if it is one of those special types
+    case pSource^.VType of
+      varDispatch,
+      varDispatch + varByRef,
+      varUnknown,
+      varUnknown + varByRef,
+      varAny:
+        if Assigned(VarDispProc) then
+          VarDispProc(PVariant(LDestPtr), Variant(pSource^), CallDesc, @Params);
+    else
+      // finally check to see if it is one of those custom types
+      if FindCustomVariantType(pSource^.VType, LHandler) then
+        TSynInvokeableVariantType(LHandler).DispInvoke(LDestPtr, pSource^, CallDesc, @Params)
+      else
+        VarInvalidOp;
+    end;
+  finally
+
+    // finish up with destination temp
+    if LDestPtr <> nil then
+    begin
+      VarClear(Variant(Dest^));
+      Dest^ := LDestPtr^;
+      ZeroFill(LDestPtr);
+    end;
+  end;
+end;
+
 procedure SynVarDispProc(Result: PVarData; const Instance: TVarData;
   CallDesc: PCallDesc; Params: Pointer); cdecl;
 const DO_PROP = 1; GET_PROP = 2; SET_PROP = 4;
 var Value: TVarData;
+    pSource: PVarData;
     Handler: TSynInvokeableVariantType;
     CacheDispInvokeType: TSynInvokeableVariantType; // to be thread-safe
 begin
-  if Instance.VType=varByRef or varVariant then // handle By Ref variants
-    SynVarDispProc(Result,PVarData(Instance.VPointer)^,CallDesc,Params) else begin
-    if Result<>nil then
-      VarClear(Variant(Result^));
-    case Instance.VType of
-    varDispatch, varDispatch or varByRef,
-    varUnknown, varUnknown or varByRef, varAny:
-      // process Ole Automation variants
-      if Assigned(VarDispProc) then
-        VarDispProc(pointer(Result),Variant(Instance),CallDesc,@Params);
-    else begin
-      // first we check for our own TSynInvokeableVariantType types
-      if SynVariantTypes<>nil then begin
-        // simple cache for the latest type: most gets are grouped
-        CacheDispInvokeType := LastDispInvokeType;
-        if (CacheDispInvokeType<>nil) and
-           (CacheDispInvokeType.VarType=TVarData(Instance).VType) and
-           (CallDesc^.CallType in [GET_PROP, DO_PROP]) and
-           (Result<>nil) and (CallDesc^.ArgCount=0) then begin
-          CacheDispInvokeType.IntGet(Result^,Instance,@CallDesc^.ArgTypes[0]);
-          exit;
-        end;
+  pSource := @Instance;
+  while pSource.VType = varByRef or varVariant do
+    pSource := PVarData(pSource.VPointer);
+
+  if Result<>nil then
+    VarClear(Variant(Result^));
+  case pSource^.VType of
+  varDispatch, varDispatch or varByRef,
+  varUnknown, varUnknown or varByRef, varAny:
+    // process Ole Automation variants
+    if Assigned(VarDispProc) then
+      VarDispProc(pointer(Result),Variant(pSource^),CallDesc,@Params);
+  else begin
+    // first we check for our own TSynInvokeableVariantType types
+    if SynVariantTypes<>nil then begin
+      // simple cache for the latest type: most gets are grouped
+      CacheDispInvokeType := LastDispInvokeType;
+      if (CacheDispInvokeType<>nil) and
+         (CacheDispInvokeType.VarType=TVarData(pSource^).VType) and
+         (CallDesc^.CallType in [GET_PROP, DO_PROP]) and
+         (Result<>nil) and (CallDesc^.ArgCount=0) then begin
+        CacheDispInvokeType.IntGet(Result^,pSource^,@CallDesc^.ArgTypes[0]);
+        exit;
       end;
-      // handle any custom variant type
-      if FindCustomVariantType(Instance.VType,TCustomVariantType(Handler)) then begin
-        if Handler.InheritsFrom(TSynInvokeableVariantType) then
-          case CallDesc^.CallType of
-          GET_PROP, DO_PROP: // fast direct call of our IntGet() virtual method
-            if (Result<>nil) and (CallDesc^.ArgCount=0) then begin
-              Handler.IntGet(Result^,Instance,@CallDesc^.ArgTypes[0]);
-              LastDispInvokeType := Handler; // speed up in loop
-              exit;
-            end;
-          SET_PROP: // fast direct call of our IntSet() virtual method
-            if (Result=nil) and (CallDesc^.ArgCount=1) then begin
-              ParseParamPointer(@Params,CallDesc^.ArgTypes[0],Value);
-              Handler.IntSet(Instance,Value,@CallDesc^.ArgTypes[1]);
-              exit;
-            end;
+    end;
+    // handle any custom variant type
+    if FindCustomVariantType(pSource^.VType,TCustomVariantType(Handler)) then begin
+      if Handler.InheritsFrom(TSynInvokeableVariantType) then
+        case CallDesc^.CallType of
+        GET_PROP, DO_PROP: // fast direct call of our IntGet() virtual method
+          if (Result<>nil) and (CallDesc^.ArgCount=0) then begin
+            Handler.IntGet(Result^,pSource^,@CallDesc^.ArgTypes[0]);
+            LastDispInvokeType := Handler; // speed up in loop
+            exit;
           end;
-        // here we call the default code handling custom types
-        Handler.DispInvoke({$ifdef DELPHI6OROLDER}Result^{$else}Result{$endif},
-          Instance,CallDesc,@Params)
-      end else
-        raise EInvalidOp.CreateFmt('Invalid variant type %d invoke',[Instance.VType]);
-    end;
-    end;
+        SET_PROP: // fast direct call of our IntSet() virtual method
+          if (Result=nil) and (CallDesc^.ArgCount=1) then begin
+            ParseParamPointer(@Params,CallDesc^.ArgTypes[0],Value);
+            Handler.IntSet(pSource^,Value,@CallDesc^.ArgTypes[1]);
+            exit;
+          end;
+        end;
+      // here we call the default code handling custom types
+      Handler.DispInvoke({$ifdef DELPHI6OROLDER}Result^{$else}Result{$endif},
+        pSource^,CallDesc,@Params)
+    end else
+      raise EInvalidOp.CreateFmt('Invalid variant type %d invoke',[pSource^.VType]);
+  end;
   end;
 end;
 
@@ -44070,6 +44133,26 @@ asm
   {$else}
   mov eax,offset Variants.@DispInvoke
   {$endif}
+end;
+
+procedure PatchDispInvoke;
+{$ifdef NOVARCOPYPROC}
+var
+    VarMgr: TVariantManager;
+{$endif}
+begin
+  ///
+  /// Delphi's _DispInvoke has a bug: calls itself recursively,
+  /// leave extra parameters outside discarded
+  /// SynVarDispProc has the same bug
+  ///
+  {$ifdef NOVARCOPYPROC}
+  GetVariantManager(VarMgr);
+  VarMgr.DispInvoke := @SynVarDispProc;
+  SetVariantManager(VarMgr);
+  {$else}
+  RedirectCode(VariantsDispInvokeAddress,@_DispInvokeNoRecursive);
+  {$endif NOVARCOPYPROC}
 end;
 
 {$ifdef DOPATCHTRTL}
@@ -64812,6 +64895,7 @@ initialization
   InitRedirectCode;
   {$endif USEPACKAGES}
   {$endif CPUARM}
+  PatchDispInvoke;
   {$endif FPC}
   InitSynCommonsConversionTables;
   RetrieveSystemInfo;
