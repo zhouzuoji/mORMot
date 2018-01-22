@@ -2367,7 +2367,7 @@ var len: integer;
     PA: PAnsiChar absolute FieldBuffer;
     PU: PUTF8Char absolute FieldBuffer;
     tmp: RawByteString;
-    {$ifndef UNICODE}
+    {$ifndef HASVARUSTRING}
     WS: WideString;
     {$endif}
 begin
@@ -2413,7 +2413,7 @@ begin
   tftUTF8: begin
     len := FromVarUInt32(PB);
     if len>0 then
-      {$ifdef UNICODE}
+      {$ifdef HASVARUSTRING}
       result := UTF8DecodeToUnicodeString(PU,len)
       {$else} begin
         UTF8ToSynUnicode(PU,len,WS);

@@ -765,6 +765,7 @@ uses
 {$ifdef MSWINDOWS}
   Windows,
   Messages,
+  VarUtils,
   {$ifndef LVCL}
   Registry,
   {$endif}
@@ -790,7 +791,8 @@ uses
   Variants,
 {$endif}
   SynLZ, // needed for TSynMapFile .mab format
-  SysUtils;
+  SysUtils,
+  SysConst;
 
 
 const
@@ -848,6 +850,30 @@ type
 {$else FPC}
 
 type
+  {$if not declared(Int8)}
+  Int8 = ShortInt;
+  {$ifend}
+
+  {$if not declared(UInt8)}
+  UInt8 = Byte;
+  {$ifend}
+
+  {$if not declared(Int16)}
+  Int16 = SmallInt;
+  {$ifend}
+
+  {$if not declared(UInt16)}
+  UInt16 = Word;
+  {$ifend}
+
+  {$if not declared(Int32)}
+  Int32 = Integer;
+  {$ifend}
+  
+  {$if not declared(UInt32)}
+  UInt32 = Cardinal;
+  {$ifend}
+  
   /// a CPU-dependent unsigned integer type cast of a pointer / register
   // - used for 64 bits compatibility, native under Free Pascal Compiler
 {$ifdef ISDELPHI2009}
@@ -1060,7 +1086,7 @@ type
   //   has been made much faster since Windows Vista/Seven)
   // - starting with Delphi 2009, it uses fastest UnicodeString type, which
   //   allow Copy On Write, Reference Counting and fast heap memory allocation
-  {$ifdef UNICODE}
+  {$ifdef HASVARUSTRING}
   SynUnicode = UnicodeString;
   {$else}
   SynUnicode = WideString;
@@ -2522,8 +2548,8 @@ function Int64ToUtf8(Value: Int64): RawUTF8; overload;
   {$ifdef PUREPASCAL}{$ifdef HASINLINE}inline;{$endif}{$endif}
 
 /// fast RawUTF8 version of IntToStr(), with proper QWord conversion
-procedure UInt64ToUtf8(Value: QWord; var result: RawUTF8);
-  
+procedure UInt64ToUtf8(Value: QWord; var result: RawUTF8); overload;
+
 /// use our fast RawUTF8 version of IntToStr()
 // - without any slow UnicodeString=String->AnsiString conversion for Delphi 2009
 // - only useful if our Enhanced Runtime (or LVCL) library is not installed
@@ -2568,6 +2594,19 @@ function IntToString(Value: cardinal): string; overload;
 
 /// faster version than default SysUtils.IntToStr implementation
 function IntToString(Value: Int64): string; overload;
+
+function UInt64ToString(Value: QWord): string;
+
+function IntToUTF16(Value: Integer): SynUnicode; overload;
+procedure IntToUTF16(Value: Integer; var result: SynUnicode); overload;
+function IntToUTF16(Value: Int64): SynUnicode; overload;
+procedure IntToUTF16(Value: Int64; var result: SynUnicode); overload;
+
+function UIntToUtf8(Value: QWord): RawUTF8; overload;
+function UIntToUtf16(Value: UInt32): SynUnicode; overload;
+procedure UIntToUtf16(Value: UInt32; var result: SynUnicode); overload;
+ procedure UIntToUtf16(Value: QWord; var result: SynUnicode); overload;
+function UIntToUtf16(Value: QWord): SynUnicode; overload;
 
 /// convert a floating-point value to its numerical text equivalency
 function DoubleToString(Value: Double): string;
@@ -8861,6 +8900,10 @@ type
     property StartDataPosition: integer read fStartDataPosition;
   end;
 
+var
+  DefaultTextWriterJSONClass: TTextWriterClass = TTextWriter;
+  DefaultTextWriterTrimEnum: boolean;
+
 /// serialize most kind of content as JSON, using its RTTI
 // - is just a wrapper around TTextWriter.AddTypedJSON()
 // - so would handle tkClass, tkEnumeration, tkSet, tkRecord, tkDynArray,
@@ -11392,7 +11435,7 @@ var
   // - noticeable when strings are used as array indexes (e.g. in SynMongoDB BSON)
   // - is defined globally, since may be used from an inlined function
   SmallUInt32UTF8: array[0..999] of RawUTF8;
-
+  SmallUInt32UTF16: array[0..999] of SynUnicode;
 
 /// fast conversion from hexa chars into binary data
 // - BinBytes contain the bytes count to be converted: Hex^ must contain
@@ -14138,46 +14181,53 @@ type
   // TInvokeableVariantType for properties getter/setter, but you should
   // manually register each type by calling SynRegisterCustomVariantType()
   // - also feature custom JSON parsing, via TryJSONToVariant() protected method
-  TSynInvokeableVariantType = class(TInvokeableVariantType)
-  private
-    /// retrieve the field/column value, support subscript
-    // - this method will call protected IntGet abstract method
-    function GetSubscript(var Dest: TVarData; const V: TVarData;
-      const Name: String; const Arguments: TVarDataArray): Boolean;
 
-    /// set the field/column value, support subscript
-    // - this method will call protected IntSet abstract method
-    {$ifdef FPC_VARIANTSETVAR} // see http://mantis.freepascal.org/view.php?id=26773
-    function SetSubscript(var V: TVarData; const Name: string;
-      const Arguments: TVarDataArray): Boolean;
-    {$else}
-    function SetSubscript(const V: TVarData; const Name: string;
-      const Arguments: TVarDataArray): Boolean;
-    {$endif}
+  PDispCallName = ^TDispCallName;
+  TDispCallName = record
+    buf: PAnsiChar;
+    len: Integer;
+  end;
+
+  PDispNamedArgument = ^TDispNamedArgument;
+  TDispNamedArgument = record
+    pname: PAnsiChar;
+    NameLen: Integer;
+    value: TVarData;
+  end;
+  TDispNamedArgumentArray = array of TDispNamedArgument;
+
+  ISynVarInvokeableEx = interface
+    ['{D206568C-6C3F-4634-A50D-588D4007C9B3}']
+    function DoFunctionEx(var V, Dest: TVarData; const name: TDispCallName; const Arguments: TVarDataArray;
+      const NameArgs: TDispNamedArgumentArray): Boolean;
+
+    function GetProperty(const V: TVarData; const name: TDispCallName;
+      const args: TVarDataArray; var dest: TVarData): Boolean;
+
+    function SetProperty(var V: TVarData; const name: TDispCallName; args: PVarData;
+      ArgCount: Integer; const value: TVarData): Boolean;
+  end;
+
+  { TSynInvokeableVariantType }
+
+  TSynInvokeableVariantType = class(TCustomVariantType, ISynVarInvokeableEx)
   protected
-    {$ifndef FPC}
-    {$ifndef DELPHI6OROLDER}
-    /// our custom call backs do not want the function names to be uppercased
-    function FixupIdent(const AText: string): string; override;
-    {$endif}
-    {$endif}
-    
     /// our custom DispInvoke support subscript access
     {$ifdef FPC_VARIANTSETVAR}
-    procedure DispInvoke(Dest: PVarData; var Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    procedure DispInvoke(pDest: PVarData; var Source: TVarData; CallDesc: PCallDesc; Params: Pointer); override;
     {$else}
     {$ifdef ISDELPHIXE3}
-    procedure DispInvoke(Dest: PVarData; [Ref] const Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    procedure DispInvoke(pDest: PVarData; [Ref] const Source: TVarData; CallDesc: PCallDesc; Params: Pointer); override;
     {$else}
-    procedure DispInvoke(Dest: PVarData; const Source: TVarData; ACallDesc: PCallDesc; Params: Pointer); override;
+    procedure DispInvoke(pDest: PVarData; const Source: TVarData; CallDesc: PCallDesc; Params: Pointer); override;
     {$endif}
     {$endif}
 
     /// override those two abstract methods for fast getter/setter implementation
     procedure IntGet(var Dest: TVarData; const V: TVarData; Name: PAnsiChar); virtual; abstract;
     procedure IntSet(const V, Value: TVarData; Name: PAnsiChar); virtual; abstract;
-    function IntDoFunction(var Dest: TVarData; const V: TVarData; const Name: string;
-      const Arguments: TVarDataArray): Boolean; virtual; abstract;
+    function DoFunction(var Dest: TVarData; const V: TVarData;
+      const Name: string; const Arguments: TVarDataArray): Boolean; virtual;
   public
     /// customization of JSON parsing into variants
     // - will be called by e.g. by VariantLoadJSON() or GetVariantFromJSON()
@@ -14192,23 +14242,27 @@ type
       EndOfObject: PUTF8Char): boolean; virtual;
     /// customization of variant into JSON serialization
     procedure ToJSON(W: TTextWriter; const Value: variant; Escape: TTextWriterKind); overload; virtual;
-    /// retrieve the field/column value
+
+    /// retrieve the field/column value, support subscript
     // - this method will call protected IntGet abstract method
-    function GetProperty(var Dest: TVarData; const V: TVarData;
-      const Name: String): Boolean; override;
+    function GetProperty(const V: TVarData; const name: TDispCallName;
+      const args: TVarDataArray; var dest: TVarData): Boolean;
+
     /// set the field/column value
     // - this method will call protected IntSet abstract method
-    {$ifdef FPC_VARIANTSETVAR} // see http://mantis.freepascal.org/view.php?id=26773
-    function SetProperty(var V: TVarData; const Name: string;
-      const Value: TVarData): Boolean; override;
-    {$else}
-    function SetProperty(const V: TVarData; const Name: string;
-      const Value: TVarData): Boolean; override;
-    {$endif}
+    function SetSimpleProperty(var V: TVarData; const Name: TDispCallName;
+      const Value: TVarData): Boolean;
 
-    function DoFunction(var Dest: TVarData; const V: TVarData; const Name: string;
-      const Arguments: TVarDataArray): Boolean; override;
+    /// set the field/column value, support subscript
+    // - this method will call protected IntSet abstract method
+    function SetProperty(var V: TVarData; const name: TDispCallName; args: PVarData;
+      ArgCount: Integer; const value: TVarData): Boolean;
 
+    function DoFunctionEx(var V, Dest: TVarData; const name: TDispCallName; const Arguments: TVarDataArray;
+      const NameArgs: TDispNamedArgumentArray): Boolean;
+
+    function GetArrayItem(const Source : TVarData; Index: Integer; var Dest: Variant): Boolean; virtual;
+    function SetArrayItem(var Source : TVarData; Index: Integer; const Dest: Variant): Boolean; virtual;
     /// clear the content
     // - this default implementation will set VType := varEmpty
     // - override it if your custom type needs to manage its internal memory
@@ -14843,8 +14897,11 @@ type
     /// low-level callback to access internal pseudo-methods
     // - mainly the _(Index: integer): variant method to retrieve an item
     // if the document is an array
-    function IntDoFunction(var Dest: TVarData; const V: TVarData;
-      const Name: string; const Arguments: TVarDataArray): Boolean; override;
+    function DoFunction(var Dest: TVarData; const V: TVarData; const Name: string;
+      const Arguments: TVarDataArray): Boolean; override;
+
+    function GetArrayItem(const Source : TVarData; Index: Integer; var Dest: Variant): Boolean; override;
+    function SetArrayItem(var Source : TVarData; Index: Integer; const Dest: Variant): Boolean; override;
     /// low-level callback to clear the content
     procedure Clear(var V: TVarData); override;
     /// low-level callback to copy two variant content
@@ -23397,6 +23454,14 @@ begin
   Ansi7ToString(PWinAnsiChar(P),@tmp[31]-P,result);
 end;
 
+function UInt64ToString(Value: QWord): string;
+var tmp: array[0..31] of AnsiChar;
+    P: PAnsiChar;
+begin
+  P := StrUInt64(@tmp[31],Value);
+  Ansi7ToString(PWinAnsiChar(P),@tmp[31]-P,result);
+end;
+
 function DoubleToString(Value: Double): string;
 var tmp: ShortString;
 begin
@@ -23441,6 +23506,14 @@ var tmp: array[0..31] of AnsiChar;
     P: PAnsiChar;
 begin
   P := StrInt64(@tmp[31],Value);
+  SetString(result,P,@tmp[31]-P);
+end;
+
+function UInt64ToString(Value: QWord): string;
+var tmp: array[0..31] of AnsiChar;
+    P: PAnsiChar;
+begin
+  P := StrUInt64(@tmp[31],Value);
   SetString(result,P,@tmp[31]-P);
 end;
 
@@ -25032,6 +25105,125 @@ begin
     result := SmallUInt32UTF8[Value] else begin
     P := StrUInt32(@tmp[15],Value);
     SetRawUTF8(result,P,@tmp[15]-P);
+  end;
+end;
+
+procedure SetUtf16(var result: SynUnicode; buf: PAnsiChar; len: Integer);
+var
+  i: Integer;
+begin
+  SetLength(result, len);
+  for i := 0 to len - 1 do
+    PWideChar(Pointer(result))[i] := WideChar(buf[i]);
+end;
+
+function IntToUTF16(Value: Integer): SynUnicode; // faster than SysUtils.IntToStr
+var tmp: array[0..15] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if cardinal(Value)<=high(SmallUInt32UTF16) then
+    result := SmallUInt32UTF16[Value]
+  else begin
+    P := StrInt32(@tmp[15],Value);
+    SetUtf16(result,P,@tmp[15]-P);
+  end;
+end;
+
+procedure IntToUTF16(Value: Integer; var result: SynUnicode); // faster than SysUtils.IntToStr
+var tmp: array[0..15] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if cardinal(Value)<=high(SmallUInt32UTF16) then
+    result := SmallUInt32UTF16[Value]
+  else begin
+    P := StrInt32(@tmp[15],Value);
+    SetUtf16(result,P,@tmp[15]-P);
+  end;
+end;
+
+function IntToUTF16(Value: Int64): SynUnicode; // faster than SysUtils.IntToStr
+var tmp: array[0..23] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if (PCardinalArray(@Value)^[0]<=high(SmallUInt32UTF16)) and
+     (PCardinalArray(@Value)^[1]=0) then
+    // Int64Rec gives compiler internal error C4963
+    result := SmallUInt32UTF16[Value] else begin
+    P := StrInt64(@tmp[23],Value);
+    SetUtf16(result,P,@tmp[23]-P);
+  end;
+end;
+
+procedure IntToUTF16(Value: Int64; var result: SynUnicode); // faster than SysUtils.IntToStr
+var tmp: array[0..23] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if (PCardinalArray(@Value)^[0]<=high(SmallUInt32UTF16)) and
+     (PCardinalArray(@Value)^[1]=0) then
+    // Int64Rec gives compiler internal error C4963
+    result := SmallUInt32UTF16[Value] else begin
+    P := StrInt64(@tmp[23],Value);
+    SetUtf16(result,P,@tmp[23]-P);
+  end;
+end;
+
+function UIntToUTF8(Value: QWord): RawUTF8;
+var tmp: array[0..23] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if (PCardinalArray(@Value)^[0]<=high(SmallUInt32UTF8)) and
+     (PCardinalArray(@Value)^[1]=0) then
+    result := SmallUInt32UTF8[Value] else begin
+    P := StrUInt64(@tmp[23],Value);
+    SetRawUTF8(result,P,@tmp[23]-P);
+  end;
+end;
+
+function UIntToUtf16(Value: UInt32): SynUnicode;
+var tmp: array[0..15] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if Value<=high(SmallUInt32UTF16) then
+    Result := SmallUInt32UTF16[Value]
+  else begin
+    P := StrUInt32(@tmp[15],Value);
+    SetUtf16(result,P,@tmp[15]-P);
+  end;
+end;
+
+procedure UIntToUtf16(Value: UInt32; var result: SynUnicode);
+var tmp: array[0..15] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if Value<=high(SmallUInt32UTF16) then
+    Result := SmallUInt32UTF16[Value]
+  else begin
+    P := StrUInt32(@tmp[15],Value);
+    SetUtf16(result,P,@tmp[15]-P);
+  end;
+end;
+
+procedure UIntToUtf16(Value: QWord; var result: SynUnicode);
+var tmp: array[0..23] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if (PCardinalArray(@Value)^[0]<=high(SmallUInt32UTF16)) and
+     (PCardinalArray(@Value)^[1]=0) then
+    result := SmallUInt32UTF16[Value] else begin
+    P := StrUInt64(@tmp[23],Value);
+    SetUtf16(result,P,@tmp[23]-P);
+  end;
+end;
+
+function UIntToUtf16(Value: QWord): SynUnicode;
+var tmp: array[0..23] of AnsiChar;
+    P: PAnsiChar;
+begin
+  if (PCardinalArray(@Value)^[0]<=high(SmallUInt32UTF16)) and
+     (PCardinalArray(@Value)^[1]=0) then
+    result := SmallUInt32UTF16[Value] else begin
+    P := StrUInt64(@tmp[23],Value);
+    SetUtf16(result,P,@tmp[23]-P);
   end;
 end;
 
@@ -32696,10 +32888,6 @@ begin
   for i := 0 to high(Values) do
     Dest[i+n] := Values[i];
 end;
-
-var
-  DefaultTextWriterJSONClass: TTextWriterClass = TTextWriter;
-  DefaultTextWriterTrimEnum: boolean;
 
 function ObjectToJSON(Value: TObject; Options: TTextWriterWriteObjectOptions): RawUTF8;
 var temp: TTextWriterStackBuffer;
@@ -43302,7 +43490,7 @@ begin
        Handler.InheritsFrom(TSynInvokeableVariantType) then
     try // handle any kind of document storage: TSynTableVariant,TBSONVariant...
       LookupVar.VType := varEmpty;
-      Handler.IntGet(LookupVar,DestVar,pointer(itemName));
+      Handler.IntGet(LookupVar,DestVar,PAnsiChar(itemName));
       if LookupVar.VType<=varNull then
         exit; // assume varNull means not found
       DestVar := LookupVar;
@@ -43342,105 +43530,107 @@ procedure TSynInvokeableVariantType.Iterate(var Dest: TVarData; const V: TVarDat
 begin // do nothing
 end;
 
-{$ifndef FPC}
-{$ifndef DELPHI6OROLDER}
-function TSynInvokeableVariantType.FixupIdent(const AText: string): string;
-begin
-  result := AText; // NO uppercased identifier for our custom types!
-end;
-{$endif DELPHI6OROLDER}
-{$endif FPC}
+{$ifndef ISDELPHIXE2}
 
+const
+  { Maximum number of dispatch arguments }
+  MaxDispArgs = 64; {+ !!}
+
+type
+{$ifndef UNICODE}
+  UnicodeString = WideString;
+  PUnicodeString = PWideString;
+{$ENDIF}
+
+  TStringRef = {$ifdef UNICODE}record{$else}object{$endif}
+    Wide: WideString;
+    Ansi: PAnsiString;
+    Unicode: PUnicodeString;
+    function FromAnsi(A: PAnsiString): PWideString;
+    function FromUnicode(U: PUnicodeString): PWidestring;
+  end;
+  TStringRefList = array[0..MaxDispArgs - 1] of TStringRef;
+
+{ TStringRef }
+
+function TStringRef.FromAnsi(A: PAnsiString): PWideString;
+begin
+  Ansi := A;
+  Unicode := nil;
+  Wide := WideString(A^);
+  Result := @Wide;
+end;
+
+function TStringRef.FromUnicode(U: PUnicodeString): PWidestring;
+begin
+  Ansi := nil;
+  Unicode := U;
+  Wide := WideString(U^);
+  Result := @Wide;
+end;
+
+{$endif}
+
+type
+  PStringRefList = ^TStringRefList;
+
+function GetDispatchInvokeArgs(CallDesc: PCallDesc; Params: Pointer; strings: PStringRefList;
+  OrderLTR : Boolean = True; OLECompatible: Boolean = True): TVarDataArray; forward;
+
+procedure TSynInvokeableVariantType.DispInvoke;
 const
   CDoMethod    = $01;
   CPropertyGet = $02;
   CPropertySet = $04;
-
-type
-  PDispInvokeDest = ^TDispInvokeDest;
-  TDispInvokeDest = packed record
-    value: TVarData;
-    selfptr: PDispInvokeDest;
-    CallType: Integer;
-  end;
-
-procedure TSynInvokeableVariantType.DispInvoke;
 var
-  TempDest: TDispInvokeDest;
-  CallDesc: TCallDesc;
+  LArgCount: Integer;
+  TempDest: TVarData;
+  VarParams : TVarDataArray;
+  CallName: TDispCallName;
 begin
-  ///
-  /// Variants.TInvokeableVariantType.DispInvoke does not support subscript property access,
-  /// so we backup original CallType to TempDest, copy CallDesc and change CallType to CDoMethod,
-  /// and then call Variants.TInvokeableVariantType.DispInvoke,
-  /// it will call our overrided TSynInvokeableVariantType.DoFunction
-  ///
+  LArgCount := CallDesc^.ArgCount;
+  CallName.buf := PAnsiChar(@CallDesc^.ArgTypes[LArgCount]);
+  CallName.len := StrLen(CallName.buf);
+  {$IFDEF  FPC}
+  VarParams := GetDispatchInvokeArgs(CallDesc, Params, nil, False, False);
+  {$ELSE}
+  VarParams := GetDispatchInvokeArgs(CallDesc, Params, nil, True, False);
+  {$ENDIF}
+  ZeroFill(@TempDest);
+  try
+    case CallDesc^.CallType of
+      CDoMethod:
+        if not DoFunctionEx(PVarData(@source)^, TempDest, CallName, VarParams, nil)
+          and ( (LArgCount > 0) or not GetProperty(source, CallName, nil, TempDest) ) then
+          RaiseDispError;
 
-  // backup original CallType
-  TempDest.selfptr := @TempDest;
-  TempDest.CallType:= ACallDesc^.CallType;
-  ZeroFill(@TempDest.value);
+      CPropertyGet:
+        if not GetProperty(source, CallName, VarParams, TempDest) then
+          RaiseDispError;
 
-  ///
-  ///  copy CallDesc and change CallType to CDoMethod,
-  ///  make Variants.TInvokeableVariantType.DispInvoke treat it as function call,
-  ///  thus Variants.TInvokeableVariantType.DispInvoke will parse parameters
-  ///  and call our DoFunction
-  ///
-  CallDesc := ACallDesc^;
-  CallDesc.CallType := CDoMethod;
-
-  ///
-  /// pass @TempDest instread of original Dest to Variants.TInvokeableVariantType.DispInvoke,
-  /// TempDest stores orignal CallType, Variants.TInvokeableVariantType.DispInvoke will pass it back
-  /// to our DoFunction
-  /// but in FPC, Variants.TInvokeableVariantType.DispInvoke set TempDest to Unassigned before it
-  /// call out DoFunction
-  ///
-  inherited DispInvoke(@TempDest, Source, @CallDesc, Params);
-
-  if Dest <> nil then
-  begin
-    // copy result value
-    VarClear(Variant(Dest^));
-    Dest^ := TempDest.value;
+      CPropertySet:
+        if (pDest <> nil) or (LArgCount = 0) or not SetProperty(PVarData(@source)^,
+         CallName, @VarParams[0], LArgCount - 1, VarParams[LArgCount - 1]) then
+          RaiseDispError;
+    else
+      RaiseDispError;
+    end;
+    if Assigned(pDest) then
+    begin
+      VarClear(Variant(pDest^));
+      pDest^ := TempDest;
+      TempDest.VType := varEmpty;
+    end;
+  finally
+    VarClear(Variant(TempDest));
   end;
 end;
 
-function TSynInvokeableVariantType.GetProperty(var Dest: TVarData;
-  const V: TVarData; const Name: String): Boolean;
-{$ifdef UNICODE}
-var Buf: array[byte] of AnsiChar; // to avoid heap allocation
-{$endif}
+function TSynInvokeableVariantType.SetSimpleProperty(var V: TVarData;
+  const Name: TDispCallName; const Value: TVarData): Boolean;
+var
+  ValueSet: TVarData;
 begin
-{$ifdef UNICODE}
-  RawUnicodeToUtf8(Buf,SizeOf(Buf),pointer(Name),length(Name),[]);
-  IntGet(Dest,V,Buf);
-{$else}
-  IntGet(Dest,V,pointer(Name));
-{$endif}
-  result := True;
-end;
-
-{$ifdef FPC_VARIANTSETVAR} // see http://mantis.freepascal.org/view.php?id=26773
-function TSynInvokeableVariantType.SetProperty(var V: TVarData;
-  const Name: string; const Value: TVarData): Boolean;
-{$else}
-function TSynInvokeableVariantType.SetProperty(const V: TVarData;
-  const Name: string; const Value: TVarData): Boolean;
-{$endif}
-var ValueSet: TVarData;
-    PropName: PAnsiChar;
-{$ifdef UNICODE}
-    Buf: array[byte] of AnsiChar; // to avoid heap allocation
-{$endif}
-begin
-{$ifdef UNICODE}
-  RawUnicodeToUtf8(Buf,SizeOf(Buf),pointer(Name),length(Name),[]);
-  PropName := @Buf[0];
-{$else}
-  PropName := pointer(Name);
-{$endif}
   ValueSet.VString := nil; // to avoid GPF in RawUTF8(ValueSet.VString) below
   if Value.VType=varByRef or varOleStr then
     RawUnicodeToUtf8(PPointer(Value.VAny)^,length(PWideString(Value.VAny)^),
@@ -43457,67 +43647,57 @@ begin
       RawUTF8(ValueSet.VString)) else
   {$endif}
   if SetVariantUnRefSimpleValue(variant(Value),ValueSet) then begin
-    IntSet(V,ValueSet,PropName);
+    IntSet(V,ValueSet,Name.buf);
     result := true;
     exit;
   end else begin
-    IntSet(V,Value,PropName);
+    IntSet(V,Value,name.buf);
     result := true;
     exit;
   end;
   try // unpatched RTL does not like Unicode values :( -> transmit a RawUTF8
     ValueSet.VType := varString;
-    IntSet(V,ValueSet,PropName);
+    IntSet(V,ValueSet,name.buf);
   finally
     RawUTF8(ValueSet.VString) := ''; // avoid memory leak
   end;
   result := True;
 end;
 
-function TSynInvokeableVariantType.GetSubscript(var Dest: TVarData; const V: TVarData;
-  const Name: String; const Arguments: TVarDataArray): Boolean;
+function FindSynVariantType(aVarType: Word; out CustomType: TSynInvokeableVariantType): boolean; forward;
+
+function TSynInvokeableVariantType.GetProperty(const V: TVarData; const name: TDispCallName;
+  const args: TVarDataArray; var dest: TVarData): Boolean;
 var
   ndx, LArgCnt: Integer;
   pDest: PVarData;
   Indices: array of Integer;
-  LKind: TDocVariantKind;
   pIndex: PVariant;
   PropName: RawUTF8;
-{$ifdef UNICODE}
-  Buf: array[byte] of AnsiChar; // to avoid heap allocation
-{$endif}
+  LHandler: TSynInvokeableVariantType;
 begin
-  Result := False;
-{$ifdef UNICODE}
-  RawUnicodeToUtf8(Buf,SizeOf(Buf),pointer(Name),length(Name),[]);
-  IntGet(Dest,V,Buf);
-{$else}
-  IntGet(Dest,V,pointer(Name));
-{$endif}
-  LArgCnt := Length(Arguments);
+  IntGet(Dest,V,Name.buf);
+  LArgCnt := Length(args);
   if LArgCnt = 0 then
   begin
-    result := True;
+    Result := True;
     Exit;
   end;
-
+  Result := False;
   pDest := FindVarData(Variant(Dest));
-  pIndex := PVariant(@Arguments[0]);
-  if (pDest.VType = DocVariantVType) and (LArgCnt = 1) then
+  pIndex := PVariant(@args[0]);
+  if (pDest^.VType >= $0100) and FindSynVariantType(pDest^.VType, LHandler) and (LArgCnt = 1) then
   begin
-    LKind := TDocVariantData(pDest^).Kind;
-    if (LKind = dvArray) and VariantToInteger(pIndex^, ndx) then
+    if VariantToInteger(pIndex^, ndx) then
     begin
       // get array item
-      TDocVariantData(pDest^).RetrieveValueOrRaiseException(ndx, Variant(Dest), True);
-      Result := True;
+      Result := LHandler.GetArrayItem(PDest^, ndx, Variant(Dest));
     end
-
     // get property
-    else if (LKind = dvObject) and VarIsStr(pIndex^) then
+    else if VarIsStr(pIndex^) then
     begin
       PropName := VariantToUTF8(pIndex^);
-      IntGet(Dest, pDest^, PAnsiChar(PropName));
+      LHandler.IntGet(Dest, pDest^, PAnsiChar(PropName));
       Result := True;
     end;
   end
@@ -43526,7 +43706,7 @@ begin
     // get OLE-Variant-Aarray item
     SetLength(Indices, LArgCnt);
     for ndx := 0 to LArgCnt - 1 do
-      if not VariantToInteger(variant(Arguments[ndx]), Indices[ndx]) then
+      if not VariantToInteger(variant(args[ndx]), Indices[ndx]) then
         Exit;
 
     Variant(Dest) := VarArrayGet(Variant(pDest^), Indices);
@@ -43534,83 +43714,88 @@ begin
   end;
 end;
 
-function TSynInvokeableVariantType.SetSubscript;
+function TSynInvokeableVariantType.SetProperty(var V: TVarData; const name: TDispCallName; args: PVarData;
+  ArgCount: Integer; const value: TVarData): Boolean;
 var
   Dest: TVarData;
-  ndx, LArgCnt: Integer;
+  ndx: Integer;
   pDest: PVarData;
   Indices: array of Integer;
-  PropName: PAnsiChar;
-  LKind: TDocVariantKind;
+  PropName: RawUTF8;
   pIndex: PVariant;
-{$ifdef UNICODE}
-  Buf: array[byte] of AnsiChar; // to avoid heap allocation
-{$endif}
+  subname: TDispCallName;
+  LHandler: TSynInvokeableVariantType;
 begin
-  LArgCnt := Length(Arguments);
-  if LArgCnt = 1 then
+  if ArgCount = 0 then
   begin
-    Result := SetProperty(V, Name, Arguments[0]);
+    Result := SetSimpleProperty(V, name, value);
     Exit;
   end;
 
-{$ifdef UNICODE}
-  RawUnicodeToUtf8(Buf,SizeOf(Buf),pointer(Name),length(Name),[]);
-  PropName := @Buf[0];
-{$else}
-  PropName := pointer(Name);
-{$endif}
   ZeroFill(@Dest);
-  IntGet(Dest,V,PropName);
+  IntGet(Dest,V,name.buf);
   Result := False;
   pDest := FindVarData(Variant(Dest));
 
-  if(pDest.VType = DocVariantVType) and (LArgCnt = 2) then
+  if (pDest^.VType >= $0100) and FindSynVariantType(pDest^.VType, LHandler) and (ArgCount = 1) then
   begin
-    LKind := TDocVariantData(pDest^).Kind;
-    pIndex := PVariant(@Arguments[0]);
-    if (LKind = dvArray) and VariantToInteger(pIndex^, ndx) then
+    pIndex := PVariant(args);
+    if VariantToInteger(pIndex^, ndx) then
     begin
       // set array item
-      TDocVariantData(pDest^).SetValueOrRaiseException(ndx, Variant(Arguments[1]));
-      Result := True;
+      Result := LHandler.SetArrayItem(pDest^, ndx, Variant(Dest));
     end
 
     // set property
-    else if (LKind = dvObject) and VarIsStr(pIndex^) then
-      Result := SetProperty(pDest^, pIndex^, Arguments[1]);
+    else if VarIsStr(pIndex^) then
+    begin
+      VariantToUTF8(pIndex^, PropName);
+      subname.buf := PAnsiChar(PropName);
+      subname.len := Length(PropName);
+      Result := LHandler.SetSimpleProperty(pDest^, subname, value);
+    end;
   end
   else if VarIsArray(Variant(Dest), True) then
   begin
     // set OLE-Variant-Aarray item
-    SetLength(Indices, LArgCnt - 1);
-    for ndx := 0 to LArgCnt - 2 do
-      if not VariantToInteger(variant(Arguments[ndx]), Indices[ndx]) then
+    SetLength(Indices, ArgCount);
+    for ndx := 0 to ArgCount - 1 do
+    begin
+      if not VariantToInteger(variant(args^), Indices[ndx]) then
         Exit;
+      Inc(args);
+    end;
 
-    VarArrayPut(Variant(pDest^), Variant(Arguments[LArgCnt - 1]), Indices);
+    VarArrayPut(Variant(pDest^), Variant(value), Indices);
     Result := True;
   end;
 end;
 
-function TSynInvokeableVariantType.DoFunction(var Dest: TVarData; const V: TVarData; const Name: string;
-  const Arguments: TVarDataArray): Boolean;
+function TSynInvokeableVariantType.DoFunction(var Dest: TVarData; const V: TVarData;
+  const Name: string; const Arguments: TVarDataArray): Boolean;
 begin
-  //  Dest indicate the original CallType
-  if PDispInvokeDest(@Dest)^.selfptr = PDispInvokeDest(@Dest) then
-    case PDispInvokeDest(@Dest)^.CallType of
-      CPropertyGet:
-        begin
-          Result := GetSubscript(Dest, V, Name, Arguments);
-          Exit;
-        end;
-      CPropertySet:
-        begin
-          Result := SetSubscript(PVarData(@V)^, Name, Arguments);
-          Exit;
-        end;
-    end;
-  Result := IntDoFunction(Dest, V, Name, Arguments);
+  Result := False;
+end;
+
+function TSynInvokeableVariantType.DoFunctionEx(var V, Dest: TVarData; const name: TDispCallName;
+  const Arguments: TVarDataArray; const NameArgs: TDispNamedArgumentArray): Boolean;
+var
+  FuncName: RawUTF8;
+begin
+  SetString(FuncName, name.buf, name.len);
+  Result := DoFunction(Dest, V, string(FuncName), Arguments);
+end;
+
+function TSynInvokeableVariantType.GetArrayItem(const Source: TVarData;
+  Index: Integer; var Dest: Variant): Boolean;
+begin
+  Result := False;
+end;
+
+function TSynInvokeableVariantType.SetArrayItem(var Source: TVarData;
+  Index: Integer; const Dest: Variant): Boolean;
+begin
+  Result := False;
 end;
 
 procedure TSynInvokeableVariantType.Clear(var V: TVarData);
@@ -43944,7 +44129,210 @@ begin
   end;
 end;
 
-{$ifndef FPC} // better not try it with FPC - rely on the current implementation
+{$ifdef FPC}
+function GetDispatchInvokeArgs(CallDesc: PCallDesc; Params: Pointer; strings: PStringRefList; OrderLTR: Boolean = True;
+  OLECompatible: Boolean = True): TVarDataArray;
+var
+  LArgCount, LArgIndex, ArgType: Byte;
+  argptr, refptr: Pointer;
+  pVarParam: PVarData;
+  argbytes: PtrInt;
+  StringCount: Integer;
+const
+  atVarMask = $3F;
+  atTypeMask = $7F;
+  atByRef = $80;
+  VAR_PARAMNOTFOUND = HRESULT($80020004);
+begin
+  LArgCount := CallDesc^.argcount;
+  SetLength(Result, LArgCount);
+  if LArgCount = 0 then
+    Exit;
+  StringCount := 0;
+  argptr := Params;
+  for LArgIndex := 0 to LArgCount - 1 do
+  begin
+    if OrderLTR then
+      pVarParam := @Result[LArgIndex]
+    else
+      pVarParam := @Result[LArgCount - LArgIndex - 1];
+    argbytes := SizeOf(Pointer);
+    ArgType := CallDesc^.ArgTypes[LArgIndex] and atTypeMask;
+
+    if ArgType = varStrArg then
+      pVarParam^.vType := varString
+    {$IFDEF HASVARUSTRARG}
+    else if ArgType = varUStrArg then
+      pVarParam^.vType := varUString
+    {$ENDIF}
+    else
+      pVarParam^.vType := ArgType;
+    refptr := PPointer(argptr)^;
+    pVarParam^.VPointer := refptr;
+    if (CallDesc^.ArgTypes[LArgIndex] and atByRef) <> 0 then
+    begin
+      if OLECompatible then
+      begin
+        if ArgType = varstrarg then
+        begin
+          pVarParam^.VType := varOleStr;
+          pVarParam^.VPointer := strings^[StringCount].FromAnsi(PAnsiString(refptr));
+          Inc(StringCount);
+        end
+        {$IFDEF HASVARUSTRARG}
+        else if ArgType = varUStrArg then
+        begin
+          pVarParam^.VType := varOleStr;
+          pVarParam^.VPointer := strings^[StringCount].FromUnicode(PUnicodeString(refptr));
+          Inc(StringCount);
+        end
+        {$ENDIF}
+        else if (ArgType = varVariant) and OLECompatible and (
+          {$IFDEF HASVARUSTRING}(PVarData(refptr)^.VType = varUString) or {$ENDIF}
+          (PVarData(refptr)^.VType = varString)) then
+          VarCast(PVariant(refptr)^, PVariant(refptr)^, varOleStr);
+      end;
+      pVarParam^.vType := pVarParam^.vType or varByRef;
+    end
+    else
+    begin
+      case ArgType of
+        varStrArg:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varOleStr;
+            refptr := Pointer(strings^[StringCount].FromAnsi(PAnsiString(argptr))^);
+            strings^[StringCount].Ansi := nil;
+            Inc(StringCount);
+          end;
+        {$IFDEF HASVARUSTRARG}
+        varUStrArg:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varOleStr;
+            refptr := Pointer(strings^[StringCount].FromUnicode(PUnicodeString(argptr))^);
+            strings^[StringCount].Unicode := nil;
+            Inc(StringCount);
+          end;
+       {$ENDIF}
+        varError:
+          begin
+            pVarParam^.vError := VAR_PARAMNOTFOUND;
+            argbytes := 0;
+          end;
+        varVariant:
+          begin
+            { Codegen always passes a pointer to variant,
+              *unlike* Delphi which pushes the entire TVarData }
+            pVarParam^ := PVarData(refptr)^;
+
+          end;
+        varDouble, varCurrency, varDate, varInt64, varQWord:
+          begin
+            pVarParam^.vQWord := PQWord(argptr)^; // 64bit on all platforms
+            argbytes := SizeOf(QWord);
+          end;
+        { values potentially smaller than sizeof(pointer) must be handled
+          explicitly to guarantee endian safety and to prevent copying/
+          skipping data (they are always copied into a 4 byte element
+          by the compiler, although it will still skip sizeof(pointer)
+          bytes afterwards) }
+        varSingle:
+          pVarParam^.vSingle := PSingle(argptr)^;
+        varSmallint:
+          pVarParam^.vSmallInt := PLongint(argptr)^;
+        varInteger:
+          pVarParam^.vInteger := PLongint(argptr)^;
+        varBoolean:
+          pVarParam^.vBoolean := WordBool(PLongint(argptr)^);
+        varShortInt:
+          pVarParam^.vShortInt := PLongint(argptr)^;
+        varByte:
+          pVarParam^.vByte := PLongint(argptr)^;
+        varWord:
+          pVarParam^.vWord := PLongint(argptr)^;
+      else
+        pVarParam^.vAny := PPointer(argptr)^; // 32 or 64bit
+      end;
+      Inc(PByte(argptr), argbytes);
+    end;
+  end;
+end;
+
+{$ifdef FPC}
+{$define HASVARIANTMANAGER}
+{$else}
+{$ifdef DELPHI6OROLDER}
+{$define HASVARIANTMANAGER}
+{$endif}
+{$endif}
+
+type
+  TVarArrayGetProc = function(const a: Variant; indexcount: SizeInt; indices: plongint): Variant; cdecl;
+  TVarArrayPutProc = procedure(var a: variant; const value: variant; indexcount: SizeInt; indices: plongint); cdecl;
+  TVarCopyProc = procedure(var d : TVarData;const s: TVarData);
+var
+  sysvararrayget: TVarArrayGetProc;
+  sysvararrayput: TVarArrayPutProc;
+  sysvarcopy: TVarCopyProc;
+
+function CustomVarArrayGet(const a: Variant; indexcount: SizeInt; indices: plongint): Variant; cdecl;
+var
+  src: PVarData;
+  handler: TCustomVariantType;
+begin
+  src := PVarData(@a);
+  { get final Variant }
+  while src^.vType = varByRef or varVariant do
+    src := PVarData(src^.vPointer);
+
+  if (src^.vType and varArray) <> 0 then
+    Result := sysvararrayget(Variant(src^), indexcount, indices)
+  else if (indexcount > 1) or not FindCustomVariantType(src^.vtype, handler)
+    or not handler.InheritsFrom(TSynInvokeableVariantType)
+    or not TSynInvokeableVariantType(handler).GetArrayItem(src^, indices^, Result) then
+    VarInvalidArgError(src^.vType);
+end;
+
+procedure CustomVarArrayPut(var a: variant; const value: variant; indexcount: SizeInt; indices: plongint); cdecl;
+var
+  src: PVarData;
+  handler: TCustomVariantType;
+begin
+  src := PVarData(@a);
+  { get final Variant }
+  while src^.vType = varByRef or varVariant do
+    src := PVarData(src^.vPointer);
+
+  if (src^.vType and varArray) <> 0 then
+    sysvararrayput(Variant(src^), value, indexcount, indices)
+  else if (indexcount > 1) or not FindCustomVariantType(src^.vtype, handler)
+    or not handler.InheritsFrom(TSynInvokeableVariantType)
+    or not TSynInvokeableVariantType(handler).SetArrayItem(src^, indices^, value) then
+    VarInvalidArgError(src^.vType);
+end;
+
+{$ifdef HASVARUSTRING}
+procedure CustomVarCopy(var d : TVarData;const s: TVarData);
+begin
+  if @d = @s then Exit;
+  if s.vtype = varUString then
+  begin
+    VarClear(Variant(d));
+    d.VType := varUString;
+    SynUnicode(d.VPointer) := SynUnicode(s.VPointer);
+  end
+  else sysvarcopy(d, s);
+end;
+{$endif}
+
+procedure PatchVarCopy;
+begin
+		sysvarcopy := VarCopyProc;
+  VarCopyProc := CustomVarCopy;
+end;
+
+{$else !FPC} // better not try it with FPC - rely on the current implementation
 
 function ParseParamPointer(P: pointer; aType: cardinal; var Value: TVarData): pointer;
 var Size: Cardinal;
@@ -44012,10 +44400,209 @@ begin // this code should copy parameters without any reference count handling
   result := PAnsiChar(P)+Size;
 end;
 
-var
-  LastDispInvokeType: TSynInvokeableVariantType;
+const
+  { Maximum number of dispatch arguments }
+  varUInt32   = $0013; { vt_ui4         19 }
 
-procedure _DispInvokeNoRecursive(Dest: PVarData; const Source: TVarData;
+var
+  _EmptyBSTR: PWideChar = nil;
+  DispatchUnsignedAsSigned: Boolean;
+
+procedure DispInvokeError;
+begin
+  raise EVariantDispatchError.Create(SDispatchError);
+end;
+
+function GetDispatchInvokeArgs(CallDesc: PCallDesc; Params: Pointer; strings: PStringRefList;
+  OrderLTR : Boolean = True; OLECompatible: Boolean = True): TVarDataArray;
+const
+  { Parameter type masks - keep in sync with decl.h/ap* enumerations}
+  atString   = $48;
+  atUString  = $4A;
+  atVarMask  = $3F;
+  atTypeMask = $7F;
+  atByRef    = $80;
+  varUInt64  = $15;
+var
+  I: Integer;
+  ArgType: Byte;
+  ArgRealType: TVarType;
+  pVarParam: PVarData;
+  StringCount: Integer;
+begin
+  SetLength(Result, CallDesc^.ArgCount);
+  if CallDesc^.ArgCount = 0 then Exit;
+  StringCount := 0;
+  for I := 0 to CallDesc^.ArgCount-1 do
+  begin
+    ArgType := CallDesc^.ArgTypes[I];
+    ArgRealType := ArgType and atTypeMask;
+
+    if OrderLTR then
+      pVarParam := @Result[I]
+    else
+      pVarParam := @Result[CallDesc^.ArgCount-I-1];
+
+    if (ArgType and atByRef) = atByRef then
+    begin
+      case ArgRealType of
+        atString:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varByRef or varOleStr;
+            pVarParam^.VPointer := strings^[StringCount].FromAnsi(PAnsiString(Params^));
+            Inc(StringCount);
+          end
+          else begin
+            pVarParam.VType := varByRef or varString;
+            pVarParam^.VPointer := PAnsiString(Params^);
+          end;
+        {$IFDEF  HASVARUSTRARG}
+        atUString:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varByRef or varOleStr;
+            pVarParam^.VPointer := strings^[StringCount].FromUnicode(PUnicodeString(Params^));
+            Inc(StringCount);
+          end
+          else begin
+            pVarParam.VType := varByRef or varUString;
+            pVarParam^.VPointer := PUnicodeString(Params^);
+          end;
+        {$ENDIF}
+        else begin
+          if (ArgRealType = varVariant) and OLECompatible and
+            ({$IFDEF HASVARUSTRING}(PVarData(Params^)^.VType = varUString) or {$ENDIF}
+            (PVarData(Params^)^.VType = varString) ) then
+            VarCast(PVariant(Params^)^, PVariant(Params^)^, varOleStr);
+
+          if DispatchUnsignedAsSigned then
+            case ArgType of
+              varUInt64:   ArgRealType := varInt64;
+              varUInt32:   ArgRealType := varInteger;
+              varWord:     ArgRealType := varSmallint;
+              varByte:     ArgRealType := varShortInt;
+            end;
+          pVarParam^.VType := varByRef or ArgRealType;
+          pVarParam^.VPointer := PPointer(Params)^;
+        end;
+      end;
+
+      Inc(PPointer(Params));
+    end
+    else // ByVal
+    begin
+      pVarParam^.VType := ArgType;
+      case ArgType of
+        varEmpty, varNull: ; // Only need to set VType
+        varSmallint:  pVarParam^.VSmallInt := PSmallInt(Params)^;
+        varInteger:   pVarParam^.VInteger := PInteger(Params)^;
+        varSingle:    pVarParam^.VSingle := PSingle(Params)^;
+        varDouble:    pVarParam^.VDouble := PDouble(Params)^;
+        varCurrency:  pVarParam^.VCurrency := PCurrency(Params)^;
+        varDate:      pVarParam^.VDate := PDateTime(Params)^;
+        varOleStr:    pVarParam^.VPointer := PPointer(Params)^;
+        varDispatch:  pVarParam^.VDispatch := PPointer(Params)^;
+        varError:     pVarParam^.VError := HRESULT($80020004); //DISP_E_PARAMNOTFOUND;
+        varBoolean:   pVarParam^.VBoolean := PBoolean(Params)^;
+        varVariant:
+        begin
+          pVarParam^.VType := varEmpty;
+          {$IFDEF CPUX64}
+          pVarParam^ := PVarData(Params^)^;
+          {$ELSE}
+          pVarParam^ := PVarData(Params)^;
+          {$ENDIF}
+        end;
+        varUnknown:   pVarParam^.VUnknown := PPointer(Params)^;
+        varShortInt:  pVarParam^.VShortInt := PShortInt(Params)^;
+        varByte:      pVarParam^.VByte :=  PByte(Params)^;
+        varWord:
+        begin
+          if DispatchUnsignedAsSigned then
+          begin
+            pVarParam^.VType := varInteger;
+            pVarParam^.VInteger := Integer(PWord(Params)^);
+          end
+          else
+            pVarParam^.VWord := PWord(Params)^;
+        end;
+        varUInt32:
+        begin
+          if DispatchUnsignedAsSigned then
+          begin
+            pVarParam^.VType := varInteger;
+            pVarParam^.VInteger := Integer(PCardinal(Params)^);
+          end else
+            pVarParam^.VLongWord := PCardinal(Params)^;
+        end;
+        varInt64:     pVarParam^.VInt64 := PInt64(Params)^;
+        varUInt64:
+        begin
+          if DispatchUnsignedAsSigned then
+            pVarParam^.VType := varInt64;
+          pVarParam^.VInt64 := Int64(PInt64(Params)^);
+        end;
+        atString:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varOleStr;
+            if PAnsiString(Params)^ <> '' then
+            begin
+              pVarParam^.VPointer := PWideChar(strings^[StringCount].FromAnsi(PAnsiString(Params))^);
+              strings^[StringCount].Ansi := nil;
+              Inc(StringCount);
+            end
+            else
+              pVarParam^.VPointer := _EmptyBSTR;
+          end
+          else begin
+            pVarParam^.VType := varString;
+            pVarParam^.VString := Pointer(Params^);
+          end;
+        {$IFDEF HASVARUSTRARG}
+        atUString:
+          if OLECompatible then
+          begin
+            pVarParam^.VType := varOleStr;
+            if PUnicodeString(Params)^ <> '' then
+            begin
+              pVarParam^.VPointer := PWideChar(strings^[StringCount].FromUnicode(PUnicodeString(Params))^);
+              strings^[StringCount].Unicode := nil;
+              Inc(StringCount);
+            end
+            else
+              pVarParam^.VPointer := _EmptyBSTR;
+          end
+          else begin
+            pVarParam^.VType := varUString;
+            pVarParam^.VString := Pointer(Params^);
+          end;
+        {$ENDIF}
+      else
+        // Unsupported Var Types
+        //varDecimal  = $000E; { vt_decimal     14 } {UNSUPPORTED as of v6.x code base}
+        //varUndef0F  = $000F; { undefined      15 } {UNSUPPORTED per Microsoft}
+        //varRecord   = $0024; { VT_RECORD      36 }
+        //varAny      = $0101; { Corba any      257 } {not OLE compatible }
+        DispInvokeError;
+      end;
+      case ArgType of
+        varError: ; // don't increase param pointer
+{$IF defined(CPUX86) or defined(CPUARM)}
+      varDouble, varCurrency, varDate, varInt64, varUInt64:
+        Inc(PByte(Params), 8);
+      varVariant:
+        Inc(PByte(Params), SizeOf(Variant));
+{$IFEND CPUX86 or CPUARM}
+      else
+        Inc(PByte(Params), SizeOf(Pointer));
+      end;
+    end;
+  end;
+end;
+
+procedure CustomDispInvoke(Dest: PVarData; const Source: TVarData;
   CallDesc: PCallDesc; Params: Pointer); cdecl;
 var
   pSource: PVarData;
@@ -44067,6 +44654,227 @@ begin
   end;
 end;
 
+function VariantsDispInvokeAddress: pointer;
+asm
+  {$ifdef CPU64}
+  mov rax,offset Variants.@DispInvoke
+  {$else}
+  mov eax,offset Variants.@DispInvoke
+  {$endif}
+end;
+
+function GetVarDataArrayInfo(const AVarData: TVarData; out AVarType: TVarType; out AVarArray: PVarArray): Boolean;
+var
+  V: PVarData;
+begin
+  V := @AVarData;
+  while V^.VType = varByRef or varVariant do
+    V := PVarData(V^.VPointer);
+
+  AVarType := V.VType;
+  Result := (AVarType and varArray) <> 0;
+
+  // figure out the array data pointer
+  if Result then
+    if (AVarType and varByRef) <> 0 then
+      AVarArray := PVarArray(V^.VPointer^)
+    else
+      AVarArray := V^.VArray
+    else
+      AVarArray := nil;
+end;
+
+{$IFDEF CPUX86}
+function CustomVarArrayGet(var A: TVarData; IndexCount: Integer; const Indices: TVarArrayCoorArray): TVarData; cdecl;
+{$ELSE}
+procedure CustomVarArrayGet(var Result: TVarData; var A: TVarData; IndexCount: Integer;
+  const Indices: PVarArrayCoorArray);
+{$ENDIF}
+const
+  VAR_INVALIDARG    = HRESULT($80070057); // = Windows.E_INVALIDARG
+  VAR_BADINDEX      = HRESULT($8002000B); // = Windows.DISP_E_BADINDEX
+var
+  LVarType: TVarType;
+  LVarArrayPtr: PVarArray;
+  LArrayVarType, LIndex: Integer;
+  P: Pointer;
+  PSource: PVarData;
+  LResult: TVarData;
+  LHandler: TCustomVariantType;
+begin
+{$IFDEF CPUX86}
+  LIndex := Indices[0];
+{$ELSE}
+  LIndex := Indices^[0];
+{$ENDIF}
+  PSource := @A;
+  while PSource^.VType = varByRef or varVariant do
+    PSource := PVarData(PSource^.VPointer);
+
+  if not GetVarDataArrayInfo(PSource^, LVarType, LVarArrayPtr) then
+  begin
+    if ( (IndexCount > 1) or not FindCustomVariantType(PSource^.VType, LHandler)
+    or not LHandler.InheritsFrom(TSynInvokeableVariantType)
+    or not TSynInvokeableVariantType(LHandler).GetArrayItem(PSource^, LIndex, Variant(Result))) then
+      VarResultCheck(VAR_INVALIDARG);
+    Exit;
+  end;
+
+  if LVarArrayPtr^.DimCount <> IndexCount then
+    VarResultCheck(VAR_BADINDEX);
+
+  // use a LTemp for result just in case the result points back to source, icky
+  ZeroFill(@LResult);
+  try
+    LArrayVarType := LVarType and varTypeMask;
+    if LArrayVarType = varVariant then
+    begin
+{$IFDEF CPUX86}
+      VarResultCheck(SafeArrayPtrOfIndex(LVarArrayPtr, @Indices, P));
+{$ELSE}
+      VarResultCheck(SafeArrayPtrOfIndex(LVarArrayPtr, Indices, P));
+{$ENDIF}
+      Variant(LResult) := PVariant(P)^;
+    end
+    else
+    begin
+{$IFDEF CPUX86}
+      VarResultCheck(SafeArrayGetElement(LVarArrayPtr, @Indices, @TVarData(LResult).VPointer));
+{$ELSE}
+      VarResultCheck(SafeArrayGetElement(LVarArrayPtr, Indices, @TVarData(LResult).VPointer));
+{$ENDIF}
+      TVarData(LResult).VType := LArrayVarType;
+    end;
+
+    // copy the LTemp result over to result
+    Result := LResult;
+    ZeroFill(@LResult);
+  finally
+    VarClear(Variant(LResult));
+  end;
+end;
+
+type
+  TAnyPutArrayProc = procedure(var A: Variant; const Value: Variant; Index: Integer);
+
+{$IFDEF CPUX86}
+procedure CustomVarArrayPut(var A: TVarData; const Value: TVarData; IndexCount: Integer;
+  const Indices: TVarArrayCoorArray); cdecl;
+{$ELSE !CPUX86}
+procedure CustomVarArrayPut(var A: TVarData; const Value: TVarData; IndexCount: Integer;
+  const Indices: PVarArrayCoorArray);
+{$ENDIF !CPUX86}
+var
+  LVarType: TVarType;
+  LVarArrayPtr: PVarArray;
+  LValueType: TVarType;
+  LValueArrayPtr: PVarArray;
+  LArrayVarType, LIndex: Integer;
+  P: Pointer;
+  LTemp: TVarData;
+  PSource: PVarData;
+  LHandler: Variants.TCustomVariantType;
+  OleStrPtr: PWideChar;
+begin
+  if not GetVarDataArrayInfo(TVarData(Value), LValueType, LValueArrayPtr) and
+    not VarTypeIsValidElementType(LValueType)
+    and (LValueType <> varString)
+    {$IFDEF UNICODE} and (LValueType <> varUString) {$ENDIF} then
+    VarResultCheck(VAR_TYPEMISMATCH);
+{$IFDEF CPUX86}
+  LIndex := Indices[0];
+{$ELSE}
+  LIndex := Indices^[0];
+{$ENDIF}
+
+  PSource := @A;
+  while PSource^.VType = varByRef or varVariant do
+    PSource := PVarData(PSource^.VPointer);
+  if not GetVarDataArrayInfo(PSource^, LVarType, LVarArrayPtr) then
+  begin
+    if ( (IndexCount > 1) or not FindCustomVariantType(PSource^.VType, LHandler)
+    or not LHandler.InheritsFrom(TSynInvokeableVariantType)
+    or not TSynInvokeableVariantType(LHandler).SetArrayItem(PSource^, LIndex, Variant(Value))) then
+      VarResultCheck(VAR_INVALIDARG);
+    Exit;
+  end;
+
+  if LVarArrayPtr^.DimCount <> IndexCount then
+    VarResultCheck(VAR_BADINDEX);
+
+  LArrayVarType := LVarType and varTypeMask;
+
+  if (LArrayVarType = varVariant)
+    // (LValueType <> varString)
+     //{$IFDEF UNICODE} and (LValueType <> varUString) {$ENDIF}
+    then
+  begin
+{$IFDEF CPUX86}
+    VarResultCheck(SafeArrayPtrOfIndex(LVarArrayPtr, @Indices, P));
+{$ELSE}
+    VarResultCheck(SafeArrayPtrOfIndex(LVarArrayPtr, Indices, P));
+{$ENDIF}
+    PVariant(P)^ := Variant(Value);
+  end
+  else begin
+    try
+      if LArrayVarType = varVariant then
+      begin
+        {$IFDEF HASVARUSTRING}
+        if Value.VType = varString then
+          OleStrPtr := StringToOleStr(Ansistring(Value.VString))
+        else // varUString
+          OleStrPtr := StringToOleStr(UnicodeString(Value.VUString));
+        {$ELSE}
+        OleStrPtr := StringToOleStr(Ansistring(Value.VString));
+        {$ENDIF}
+        LTemp.VType := varOleStr;
+        LTemp.VOleStr := OleStrPtr;
+        P := @LTemp;
+      end
+      else
+      begin
+        ZeroFill(@LTemp);
+        VarCast(Variant(LTemp), Variant(Value), LArrayVarType);
+        case LArrayVarType of
+          varOleStr, varDispatch, varUnknown:
+            P := LTemp.VPointer;
+        else
+          P := @LTemp.VPointer;
+        end;
+      end;
+{$IFDEF CPUX86}
+      VarResultCheck(SafeArrayPutElement(LVarArrayPtr, @Indices, P));
+{$ELSE}
+      VarResultCheck(SafeArrayPutElement(LVarArrayPtr, Indices, P));
+{$ENDIF}
+    finally
+      VarClear(Variant(LTemp));
+    end;
+  end;
+end;
+
+function SysVarArrayGetAddress: Pointer;
+asm
+  {$IFDEF CPU64}
+  mov rax,offset Variants.@VarArrayGet
+  {$ELSE}
+  mov eax,offset Variants.@VarArrayGet
+  {$ENDIF}
+end;
+
+function SysVarArrayPutAddress: Pointer;
+asm
+  {$IFDEF CPU64}
+  mov rax,offset Variants.@VarArrayPut
+  {$ELSE}
+  mov eax,offset Variants.@VarArrayPut
+  {$ENDIF}
+end;
+
+var
+  LastDispInvokeType: TSynInvokeableVariantType;
+
 procedure SynVarDispProc(Result: PVarData; const Instance: TVarData;
   CallDesc: PCallDesc; Params: Pointer); cdecl;
 const DO_PROP = 1; GET_PROP = 2; SET_PROP = 4;
@@ -44095,8 +44903,9 @@ begin
       if (CacheDispInvokeType<>nil) and
          (CacheDispInvokeType.VarType=TVarData(pSource^).VType) and
          (CallDesc^.CallType in [GET_PROP, DO_PROP]) and
-         (Result<>nil) and (CallDesc^.ArgCount=0) then begin
-        CacheDispInvokeType.IntGet(Result^,pSource^,@CallDesc^.ArgTypes[0]);
+         (Result<>nil) and (CallDesc^.ArgCount=0) then
+      begin
+        CacheDispInvokeType.IntGet(Result^,pSource^, @CallDesc^.ArgTypes[0]);
         exit;
       end;
     end;
@@ -44105,13 +44914,15 @@ begin
       if Handler.InheritsFrom(TSynInvokeableVariantType) then
         case CallDesc^.CallType of
         GET_PROP, DO_PROP: // fast direct call of our IntGet() virtual method
-          if (Result<>nil) and (CallDesc^.ArgCount=0) then begin
+          if (Result<>nil) and (CallDesc^.ArgCount=0) then
+          begin
             Handler.IntGet(Result^,pSource^,@CallDesc^.ArgTypes[0]);
             LastDispInvokeType := Handler; // speed up in loop
             exit;
           end;
         SET_PROP: // fast direct call of our IntSet() virtual method
-          if (Result=nil) and (CallDesc^.ArgCount=1) then begin
+          if (Result=nil) and (CallDesc^.ArgCount=1) then
+          begin
             ParseParamPointer(@Params,CallDesc^.ArgTypes[0],Value);
             Handler.IntSet(pSource^,Value,@CallDesc^.ArgTypes[1]);
             exit;
@@ -44126,35 +44937,6 @@ begin
   end;
 end;
 
-function VariantsDispInvokeAddress: pointer;
-asm
-  {$ifdef CPU64}
-  mov rax,offset Variants.@DispInvoke
-  {$else}
-  mov eax,offset Variants.@DispInvoke
-  {$endif}
-end;
-
-procedure PatchDispInvoke;
-{$ifdef NOVARCOPYPROC}
-var
-    VarMgr: TVariantManager;
-{$endif}
-begin
-  ///
-  /// Delphi's _DispInvoke has a bug: calls itself recursively,
-  /// leave extra parameters outside discarded
-  /// SynVarDispProc has the same bug
-  ///
-  {$ifdef NOVARCOPYPROC}
-  GetVariantManager(VarMgr);
-  VarMgr.DispInvoke := @SynVarDispProc;
-  SetVariantManager(VarMgr);
-  {$else}
-  RedirectCode(VariantsDispInvokeAddress,@_DispInvokeNoRecursive);
-  {$endif NOVARCOPYPROC}
-end;
-
 {$ifdef DOPATCHTRTL}
   {$define DOPATCHDISPINVOKE} // much faster late-binding process for our types
 {$endif}
@@ -44167,7 +44949,46 @@ end;
   // to circumvent LIdent := Uppercase() in TInvokeableVariantType.DispInvoke()
 {$endif}
 
-{$endif FPC}
+{$endif !FPC}
+
+var
+  DispInvokePatched: Boolean = False;
+
+procedure PatchDispInvoke(NewDispInvokeProc: Pointer);
+{$ifdef HASVARIANTMANAGER}
+var
+  VarMgr: TVariantManager;
+{$endif}
+begin
+  if not DispInvokePatched then
+  begin
+    {$ifdef HASVARIANTMANAGER}
+    GetVariantManager(VarMgr);
+    Pointer(@VarMgr.DispInvoke) := NewDispInvokeProc;
+    SetVariantManager(VarMgr);
+    {$else}
+    RedirectCode(VariantsDispInvokeAddress,NewDispInvokeProc);
+    {$endif}
+    DispInvokePatched := True;
+  end;
+end;
+
+procedure PatchVarArrayAccess(NewVarArrayGetProc, NewVarArrayPutProc: Pointer);
+{$IFDEF HASVARIANTMANAGER}
+var
+  VarMgr: TVariantManager;
+{$ENDIF}
+begin
+{$IFDEF HASVARIANTMANAGER}
+  GetVariantManager(VarMgr);
+  Pointer(@VarMgr.VarArrayGet) := NewVarArrayGetProc;
+  Pointer(@VarMgr.VarArrayPut) := NewVarArrayPutProc;
+  SetVariantManager(VarMgr);
+{$ELSE}
+  RedirectCode(SysVarArrayGetAddress, NewVarArrayGetProc);
+  RedirectCode(SysVarArrayPutAddress, NewVarArrayPutProc);
+{$ENDIF}
+end;
 
 function SynRegisterCustomVariantType(aClass: TSynInvokeableVariantTypeClass): TSynInvokeableVariantType;
 var i: integer;
@@ -44182,15 +45003,8 @@ begin
     {$ifdef DOPATCHDISPINVOKE}
     {$ifndef CPU64} // we NEED our patched RTL on Win64
     if DebugHook=0 then // patch VCL/RTL only outside debugging
-    {$endif} begin
-      {$ifdef NOVARCOPYPROC}
-      GetVariantManager(VarMgr);
-      VarMgr.DispInvoke := @SynVarDispProc;
-      SetVariantManager(VarMgr);
-      {$else}
-      RedirectCode(VariantsDispInvokeAddress,@SynVarDispProc);
-      {$endif NOVARCOPYPROC}
-    end;
+    {$endif}
+      PatchDispInvoke(@SynVarDispProc);
     {$endif DOPATCHDISPINVOKE}
     {$endif FPC}
     GarbageCollectorFreeAndNil(SynVariantTypes,TObjectList.Create);
@@ -44205,7 +45019,6 @@ begin
   if aClass=TDocVariant then
     DocVariantVType := result.VarType;
 end;
-
 
 function VariantDynArrayToJSON(const V: TVariantDynArray): RawUTF8;
 var tmp: TDocVariantData;
@@ -46038,8 +46851,7 @@ begin
   fInternValues.Free;
 end;
 
-procedure TDocVariant.IntGet(var Dest: TVarData;
-  const V: TVarData; Name: PAnsiChar);
+procedure TDocVariant.IntGet(var Dest: TVarData; const V: TVarData; Name: PAnsiChar);
   procedure Execute(ndx: integer;
     const source: TDocVariantData; var Dest: variant);
   begin
@@ -46078,7 +46890,7 @@ begin
       DocVariantType.InternValues.UniqueVariant(Data.VValue[ndx]);
     exit;
   end;
-  SetString(aName,Name,StrLen(PUTF8Char(Name)));
+  SetString(aName,Name,StrLen(Name));
   ndx := Data.GetValueIndex(aName);
   if ndx<0 then
     ndx := Data.InternalAdd(aName);
@@ -46103,8 +46915,8 @@ begin
     Dest.VType := varEmpty;
 end;
 
-function TDocVariant.IntDoFunction(var Dest: TVarData; const V: TVarData;
-  const Name: string; const Arguments: TVarDataArray): boolean;
+function TDocVariant.DoFunction(var Dest: TVarData; const V: TVarData; const Name: string;
+  const Arguments: TVarDataArray): Boolean;
 var ndx: integer;
     Data: PDocVariantData;
     temp: RawUTF8;
@@ -46173,8 +46985,106 @@ begin
   result := false;
 end;
 
+(*
+var ndx: integer;
+    Data: PDocVariantData;
+    temp: RawUTF8;
+  procedure SetTempFromFirstArgument;
+  var wasString: boolean;
+  begin
+    VariantToUTF8(variant(Arguments[0]),temp,wasString);
+  end;
+begin
+  result := true;
+  Data := @V; // Data=V is const so should not be modified - but we need it
+  case length(Arguments) of
+  0:if IdemPropName(PUTF8Char(Name.buf), 'Clear', Name.len, 5) then begin
+      Data^.VCount := 0;
+      Data^.VOptions := Data^.VOptions-[dvoIsObject,dvoIsArray];
+      exit;
+    end;
+  1:if IdemPropName(PUTF8Char(Name.buf),'Add',Name.len,3) then begin
+      ndx := Data^.InternalAdd(''); // FPC does not allow VValue[InternalAdd(aName)]
+      SetVariantByValue(variant(Arguments[0]),Data^.VValue[ndx]);
+      if dvoInternValues in Data^.VOptions then
+        DocVariantType.InternValues.UniqueVariant(Data^.VValue[ndx]);
+      exit;
+    end else
+    if IdemPropName(PUTF8Char(Name.buf),'Delete',name.len,6) then begin
+      SetTempFromFirstArgument;
+      Data^.Delete(Data^.GetValueIndex(temp));
+      exit;
+    end else
+    if IdemPropName(PUTF8Char(Name.buf),'Exists',Name.len,6) then begin
+      SetTempFromFirstArgument;
+      variant(Dest) := Data^.GetValueIndex(temp)>=0;
+      exit;
+    end else
+    if IdemPropName(PUTF8Char(Name.buf),'NameIndex',name.len,9) then begin
+      SetTempFromFirstArgument;
+      variant(Dest) := Data^.GetValueIndex(temp);
+      exit;
+    end else
+    if VariantToInteger(variant(Arguments[0]),ndx) then begin
+      if (PWord(Name.buf)^=Ord('_')) or IdemPropName(PUTF8Char(Name.buf),'Value',Name.len,5) then begin
+        Data^.RetrieveValueOrRaiseException(ndx,variant(Dest),true);
+        exit;
+      end else
+      if IdemPropName(PUTF8Char(Name.buf),'Name',Name.len,4) then begin
+        Data^.RetrieveNameOrRaiseException(ndx,temp);
+        RawUTF8ToVariant(temp,variant(Dest));
+        exit;
+      end;
+    end else
+    if (PWord(Name.buf)^=Ord('_')) or IdemPropName(PUTF8Char(Name.buf),'Value',Name.len,5) then begin
+      SetTempFromFirstArgument;
+      Data^.RetrieveValueOrRaiseException(pointer(temp),length(temp),
+        dvoNameCaseSensitive in Data^.VOptions,variant(Dest),true);
+      exit;
+    end;
+  2:if IdemPropName(PUTF8Char(Name.buf),'Add',Name.len,3) then begin
+      SetTempFromFirstArgument;
+      ndx := Data^.InternalAdd(temp); // FPC does not allow VValue[InternalAdd(aName)]
+      SetVariantByValue(variant(Arguments[1]),Data^.VValue[ndx]);
+      if dvoInternValues in Data^.VOptions then
+        DocVariantType.InternValues.UniqueVariant(Data^.VValue[ndx]);
+      exit;
+    end;
+  end;
+  result := false;
+end;
+*)
+
+function TDocVariant.GetArrayItem(const Source: TVarData; Index: Integer;
+  var Dest: Variant): Boolean;
+var
+   doc: TDocVariantData absolute Source;
+begin
+  if doc.Kind = dvArray then
+  begin
+    doc.RetrieveValueOrRaiseException(Index, Dest, True);
+    Result := True;
+  end
+  else
+    Result := False;
+end;
+
+function TDocVariant.SetArrayItem(var Source: TVarData; Index: Integer;
+  const Dest: Variant): Boolean;
+var
+   doc: TDocVariantData absolute Source;
+begin
+  if doc.Kind = dvArray then
+  begin
+    doc.SetValueOrRaiseException(Index, Dest);
+    Result := True;
+  end
+  else
+    Result := False;
+end;
+
 procedure TDocVariant.ToJSON(W: TTextWriter; const Value: variant;
-  escape: TTextWriterKind);
+  Escape: TTextWriterKind);
 var ndx: integer;
     backup: TTextWriterOptions;
     checkExtendedPropName: boolean;
@@ -46338,7 +47248,7 @@ begin
     aValues[i]^.InitFast;
 end;
 
-class function TDocVariant.New(Options: TDocVariantOptions): Variant;
+class function TDocVariant.New(Options: TDocVariantOptions): variant;
 begin
   {$ifndef FPC}
   if TVarData(result).VType and VTYPE_STATIC<>0 then
@@ -53772,8 +54682,8 @@ begin
 end;
 
 /// decode a JSON field into an UTF-8 encoded buffer, stored inplace of JSON data
-function GetJSONField(P: PUTF8Char; out PDest: PUTF8Char;
-  wasString: PBoolean; EndOfObject: PUTF8Char; Len: PInteger): PUTF8Char;
+function GetJSONField(P: PUTF8Char; out PDest: PUTF8Char; wasString: PBoolean;
+  EndOfObject: PUTF8Char; Len: PInteger): PUTF8Char;
 var D: PUTF8Char;
     b,c4,surrogate,j: integer;
 label slash,num;
@@ -53956,7 +54866,8 @@ num:result := P;
       exit;
     if Len<>nil then
       Len^ := P-result;
-    if P^<=' ' then begin
+    if P^<=' ' then
+    begin
       P^ := #0; // force numerical field with no trailing ' '
       inc(P);
     end;
@@ -53993,7 +54904,8 @@ begin  // should match GotoNextJSONObjectOrArray() and JsonPropNameValid()
     until not (ord(P[0]) in IsJsonIdentifier);
     if Len<>nil then
       Len^ := P-Name;
-    if P^ in [#1..' '] then begin
+    if P^ in [#1..' '] then
+    begin
       P^ := #0;
       inc(P);
     end;
@@ -64835,6 +65747,7 @@ begin
   for i := 0 to high(SmallUInt32UTF8) do begin
     P := StrUInt32(@tmp[15],i);
     SetString(SmallUInt32UTF8[i],P,@tmp[15]-P);
+    SetUtf16(SmallUInt32UTF16[i],P,@tmp[15]-P);
   end;
   UpperCopy255Buf := @UpperCopy255BufPas;
   {$ifdef CPUINTEL}
@@ -64879,12 +65792,16 @@ initialization
   GarbageCollectorFreeAndNilList := TList.Create;
   GarbageCollectorFreeAndNil(GarbageCollector,TObjectList.Create);
   InitializeCriticalSection(GlobalCriticalSection);
+  PatchVarArrayAccess(@CustomVarArrayGet, @CustomVarArrayPut);
   {$ifdef CPUINTEL}
   TestIntelCpuFeatures;
   {$endif}
   MoveFast := @System.Move;
   crcblock := @crcblockNoSSE42;
   {$ifdef FPC}
+  {$ifdef HASVARUSTRING}
+  PatchVarCopy;
+  {$endif}
   FillCharFast := @System.FillChar; // FPC cross-platform RTL is optimized enough
   {$else}
   {$ifdef CPUARM}
@@ -64895,7 +65812,13 @@ initialization
   InitRedirectCode;
   {$endif USEPACKAGES}
   {$endif CPUARM}
-  PatchDispInvoke;
+  {$ifndef ISDELPHIXE2}
+  ///
+  /// Variants._DispInvoke before Delphi XE2 has a bug: calls itself recursively,
+  /// leave extra parameters outside discarded
+  ///
+  PatchDispInvoke(@SynVarDispProc);
+  {$endif}
   {$endif FPC}
   InitSynCommonsConversionTables;
   RetrieveSystemInfo;

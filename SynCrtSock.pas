@@ -308,7 +308,7 @@ var
   HTTP_DEFAULT_RECEIVETIMEOUT: integer = 30000;
 
 type
-{$ifdef UNICODE}
+{$ifdef HASVARUSTRING}
   /// define the fastest Unicode string type of the compiler
   SynUnicode = UnicodeString;
   /// define a raw 8-bit storage string type, used for data buffer management
