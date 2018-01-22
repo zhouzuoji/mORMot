@@ -13457,10 +13457,12 @@ type
   end;
 
   /// optimized thread-safe storage of a list of IP adresses
-  TIPBan = class(TSynPersistentLocked)
+  TIPBan = class(TSynPersistentStore)
   protected
     fIP4: TIntegerDynArray;
     fCount: integer;
+    procedure LoadFromReader; override;
+    procedure SaveToWriter(aWriter: TFileBufferWriter); override;
   public
     /// register one IP to the list
     function Add(const aIP: RawUTF8): boolean;
@@ -23049,6 +23051,8 @@ constructor TSQLPropInfoRTTIDynArray.Create(aPropInfo: PPropInfo;
 begin
   inherited Create(aPropInfo,aPropIndex,aSQLFieldType);
   fObjArray := aPropInfo^.DynArrayIsObjArrayInstance;
+  if fObjArray<>nil then
+    fSQLDBFieldType := ftUTF8; // stored as JSON text, not as BLOB
   if fGetterIsFieldPropOffset=0 then
     raise EModelException.CreateUTF8('%.Create(%) getter!',[self,fPropType^.Name]);
 end;
@@ -36651,6 +36655,18 @@ end;
 
 
 { TIPBan }
+
+procedure TIPBan.LoadFromReader;
+begin
+  inherited;
+  fReader.ReadVarUInt32Array(fIP4);
+  fCount := length(fIP4);
+end;
+
+procedure TIPBan.SaveToWriter(aWriter: TFileBufferWriter);
+begin
+  aWriter.WriteVarUInt32Array(fIP4, fCount, wkUInt32);
+end;
 
 function IPToCardinal(const aIP: RawUTF8; out aValue: cardinal): boolean;
 var P: PUTF8Char;
