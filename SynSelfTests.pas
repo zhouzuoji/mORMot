@@ -391,6 +391,8 @@ type
     procedure _TSynUniqueIdentifier;
     /// test the TSynDictionary class
     procedure _TSynDictionary;
+    /// validate the TSynQueue class
+    procedure _TSynQueue;
   end;
 
   /// this test case will test most low-level functions, classes and types
@@ -518,7 +520,7 @@ type
     /// JWT classes
     procedure _JWT;
     {$endif NOVARIANTS}
-    /// compute some performance numbers, mostly against regression 
+    /// compute some performance numbers, mostly against regression
     procedure Benchmark;
   end;
 
@@ -663,6 +665,8 @@ type
   protected
     function CreateShardDB(maxshard: Integer): TSQLRestServer;
   published
+    /// test the TSQLTableWritable table
+    procedure _TSQLTableWritable;
     /// validate RTREE virtual tables
     procedure _RTree;
     /// validate TSQLRestStorageShardDB add operation, with or without batch
@@ -1131,7 +1135,7 @@ type
     /// convert a floating-point value into text
     function ToTextFunc(Value: double): string;
     /// swap two by-reference floating-point values
-    // - would validate pointer use instead of XMM1/XMM2 registers under Win64 
+    // - would validate pointer use instead of XMM1/XMM2 registers under Win64
     procedure Swap(var n1,n2: double);
     // test unaligned stack access
     function StackIntMultiply(n1,n2,n3,n4,n5,n6,n7,n8,n9,n10: integer): Int64;
@@ -1553,6 +1557,69 @@ begin
   Check(AnsiIComp('abcD','ABcF')=StrComp(PAnsiChar('ABCD'),PAnsiChar('ABCF')));
   Check(StrIComp(PAnsiChar('abcD'),PAnsiChar('ABcd'))=AnsiIComp('abcD','ABcd'));
   Check(StrIComp(PAnsiChar('abcD'),PAnsiChar('ABcF'))=AnsiIComp('ABCD','ABCF'));
+  Check(strcspn(PAnsiChar('ab'),PAnsiChar('a'#0))=0);
+  Check(strcspn(PAnsiChar('ab'),PAnsiChar('b'#0))=1);
+  Check(strcspn(PAnsiChar('1234ab'),PAnsiChar('a'#0))=4);
+  Check(strcspn(PAnsiChar('12345ab'),PAnsiChar('a'#0))=5);
+  Check(strcspn(PAnsiChar('123456ab'),PAnsiChar('a'#0))=6);
+  Check(strcspn(PAnsiChar('1234567ab'),PAnsiChar('a'#0))=7);
+  Check(strcspn(PAnsiChar('12345678ab'),PAnsiChar('a'#0))=8);
+  Check(strcspn(PAnsiChar('1234ab'),PAnsiChar('c'#0))=6);
+  Check(strcspnpas(PAnsiChar('ab'),PAnsiChar('a'#0))=0);
+  Check(strcspnpas(PAnsiChar('ab'),PAnsiChar('b'#0))=1);
+  Check(strcspnpas(PAnsiChar('1234ab'),PAnsiChar('a'#0))=4);
+  Check(strcspnpas(PAnsiChar('12345ab'),PAnsiChar('a'#0))=5);
+  Check(strcspnpas(PAnsiChar('123456ab'),PAnsiChar('a'#0))=6);
+  Check(strcspnpas(PAnsiChar('1234567ab'),PAnsiChar('a'#0))=7);
+  Check(strcspnpas(PAnsiChar('12345678ab'),PAnsiChar('a'#0))=8);
+  Check(strcspnpas(PAnsiChar('1234ab'),PAnsiChar('c'#0))=6);
+  Check(strcspnpas(PAnsiChar('12345678901234567ab'),PAnsiChar('cccccccccccccccccccd'))=19);
+  Assert(strspn(PAnsiChar('abcdef'),PAnsiChar('debca'))=5);
+  Assert(strspn(PAnsiChar('baabbaabcd'),PAnsiChar('ab'))=8);
+  Assert(strspnpas(PAnsiChar('abcdef'),PAnsiChar('g'#0))=0);
+  Assert(strspnpas(PAnsiChar('abcdef'),PAnsiChar('a'#0))=1);
+  Assert(strspnpas(PAnsiChar('bbcdef'),PAnsiChar('b'#0))=2);
+  Assert(strspnpas(PAnsiChar('bbcdef'),PAnsiChar('bf'))=2);
+  Assert(strspnpas(PAnsiChar('bcbdef'),PAnsiChar('cb'))=3);
+  Assert(strspnpas(PAnsiChar('baabcd'),PAnsiChar('ab'))=4);
+  Assert(strspnpas(PAnsiChar('abcdef'),PAnsiChar('debca'))=5);
+  Assert(strspnpas(PAnsiChar('baabbaabcd'),PAnsiChar('ab'))=8);
+  Assert(strspnpas(PAnsiChar('baabbaabbaabcd'),PAnsiChar('ab'))=12);
+  Assert(strspnpas(PAnsiChar('baabbaabbaabbabcd'),PAnsiChar('ab'))=15);
+  Assert(strspnpas(PAnsiChar('baabbaabbaabbaabcd'),PAnsiChar('ab'))=16);
+  Assert(strspnpas(PAnsiChar('baabbaabbaababaabcd'),PAnsiChar('ab'))=17);
+  if cfSSE42 in CpuFeatures then begin
+    Check(strcspnsse42(PAnsiChar('ab'),PAnsiChar('a'#0))=0);
+    Check(strcspnsse42(PAnsiChar('ab'),PAnsiChar('b'#0))=1);
+    Check(strcspnsse42(PAnsiChar('1234ab'),PAnsiChar('a'#0))=4);
+    Check(strcspnsse42(PAnsiChar('12345ab'),PAnsiChar('a'#0))=5);
+    Check(strcspnsse42(PAnsiChar('123456ab'),PAnsiChar('a'#0))=6);
+    Check(strcspnsse42(PAnsiChar('1234567ab'),PAnsiChar('a'#0))=7);
+    Check(strcspnsse42(PAnsiChar('12345678ab'),PAnsiChar('a'#0))=8);
+    Check(strcspnsse42(PAnsiChar('123456789ab'),PAnsiChar('a'#0))=9);
+    Check(strcspnsse42(PAnsiChar('1234ab'),PAnsiChar('c'#0))=6);
+    Check(strcspnsse42(PAnsiChar('123456789012345ab'),PAnsiChar('a'#0))=15);
+    Check(strcspnsse42(PAnsiChar('1234567890123456ab'),PAnsiChar('a'#0))=16);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('a'#0))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('cccccccccccccca'))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('ccccccccccccccca'))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('cccccccccccccccca'))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('ccccccccccccccccca'))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('ccccccccccccccccccca'))=17);
+    Check(strcspnsse42(PAnsiChar('12345678901234567ab'),PAnsiChar('cccccccccccccccccccd'))=19);
+    Check(strspnsse42(PAnsiChar('abcdef'),PAnsiChar('g'#0))=0);
+    Check(strspnsse42(PAnsiChar('abcdef'),PAnsiChar('a'#0))=1);
+    Check(strspnsse42(PAnsiChar('bbcdef'),PAnsiChar('b'#0))=2);
+    Check(strspnsse42(PAnsiChar('bbcdef'),PAnsiChar('bf'))=2);
+    Check(strspnsse42(PAnsiChar('bcbdef'),PAnsiChar('cb'))=3);
+    Check(strspnsse42(PAnsiChar('baabcd'),PAnsiChar('ab'))=4);
+    Check(strspnsse42(PAnsiChar('abcdef'),PAnsiChar('debca'))=5);
+    Check(strspnsse42(PAnsiChar('baabbaabcd'),PAnsiChar('ab'))=8);
+    Check(strspnsse42(PAnsiChar('baabbaabbaabcd'),PAnsiChar('ab'))=12);
+    Check(strspnsse42(PAnsiChar('baabbaabbaabbabcd'),PAnsiChar('ab'))=15);
+    Check(strspnsse42(PAnsiChar('baabbaabbaabbaabcd'),PAnsiChar('ab'))=16);
+    Check(strspnsse42(PAnsiChar('baabbaabbaababaabcd'),PAnsiChar('ab'))=17);
+  end;
 end;
 
 procedure TTestLowLevelCommon.IniFiles;
@@ -2648,7 +2715,6 @@ begin
   Check(A.Dyn[0]=0);
   for i := 0 to High(B.Bulk) do
     Check(B.Bulk[i]=i);
-  Check(CompareMem(@A,@A,0));
   for i := 0 to High(B.Bulk) do
     Check(CompareMem(@A.Bulk,@B.Bulk,i));
   FillCharFast(A.Bulk,sizeof(A.Bulk),255);
@@ -2847,7 +2913,7 @@ var int: TRawUTF8Interning;
     vs: TRawUTF8DynArray;
     timer: TPrecisionTimer;
 const MAX=500000;
-      DIRSIZE = 16*(MAX+1); // assume each SmallUInt32UTF8[] uses 16 heap bytes 
+      DIRSIZE = 16*(MAX+1); // assume each SmallUInt32UTF8[] uses 16 heap bytes
       INTSIZE = 512*16;
 begin
   {$ifndef HASINLINE} // inlining induces optimizations which trigger Clean
@@ -3546,7 +3612,18 @@ var i, len, CP, L: integer;
     {$endif}
     Unic: RawUnicode;
     WA: Boolean;
+const ROWIDS: array[0..17] of PUTF8Char = (
+  'id','ID','iD','rowid','ROWid','ROWID','rowiD','ROWId', // ok
+  'id2','id ','idd','i','rowi','row','ROWI','ROW','ROWIDD','ROWID ');
+  IDPU: array[0..15] of PUTF8Char = (
+    'anything','t','1','te','tE','TE','tes','test','TeSt','teS','tesT','testE',
+    'T','T','1','teste');
+  IDPA: array[0..15] of PAnsiChar = (
+    nil,'T','1','TE','TE','TE','TES','TEST','TEST','TES','TEST','TESTE',
+    't','U','2','TESTe');
 begin
+  for i := 0 to high(ROWIDS) do
+    Check(isRowID(ROWIDS[i])=(i<8));
   U := 'old1,old2,old3';
   Check(not RenameInCSV('old','new',U));
   Check(RenameInCSV('old1','n1',U));
@@ -3561,21 +3638,8 @@ begin
   Check(RenameInCSV('1','ah',U,'-'));
   Check(RenameInCSV('3','see',U,'-'));
   Check(U='ah-bee-see');
-  Check(IdemPChar('anything',''));
-  Check(IdemPChar('t','T'));
-  Check(IdemPChar('T','T'));
-  Check(not IdemPChar('T','t'));
-  Check(not IdemPChar('T','U'));
-  Check(IdemPChar('1','1'));
-  Check(not IdemPChar('1','2'));
-  Check(IdemPChar('te','TE'));
-  Check(IdemPChar('tes','TES'));
-  Check(IdemPChar('test','TEST'));
-  Check(IdemPChar('tE','TE'));
-  Check(IdemPChar('teS','TES'));
-  Check(IdemPChar('tesT','TEST'));
-  Check(IdemPChar('testE','TESTE'));
-  Check(not IdemPChar('testE','TESTe'));
+  for i := 0 to High(IDPU) do
+    Check(IdemPChar(IDPU[i],IDPA[i])=(i<12));
   res := 'one,two,three';
   Check(EndWith('three','THREE'));
   Check(EndWith(res,'E'));
@@ -4643,11 +4707,11 @@ begin
   len := SyslogMessage(sfAuth,ssCrit,'test','','',tmp,sizeof(tmp),false);
   // Check(len=65); // <-- different for every PC, due to PC name differences
   tmp[len] := #0;
-  Check(IdemPChar(tmp,'<34>1 '));
+  Check(IdemPChar(PUTF8Char(@tmp),PAnsiChar('<34>1 ')));
   Check(PosEx(' - - - test',tmp)=len-10);
   msg := RawUTF8(StringOfChar('+',300));
   len := SyslogMessage(sfLocal4,ssNotice,msg,'proc','msg',tmp,300,false);
-  Check(IdemPChar(tmp,'<165>1 '));
+  Check(IdemPChar(PUTF8Char(@tmp),PAnsiChar('<165>1 ')));
   Check(PosEx(' proc msg - ++++',tmp)>1);
   Check(len<300,'truncated to avoid buffer overflow');
   Check(tmp[len-1]='+');
@@ -4842,7 +4906,6 @@ begin
     gen.Free;
   end;
 end;
-
 procedure TTestLowLevelCommon._TSynDictionary;
 type tvalue = {$ifdef NOVARIANTS}integer{$else}variant{$endif};
      tvalues = {$ifdef NOVARIANTS}TIntegerDynArray{$else}TVariantDynArray{$endif};
@@ -4907,6 +4970,118 @@ begin
     end;
   finally
     dict.Free;
+  end;
+end;
+
+procedure TTestLowLevelCommon._TSynQueue;
+var o,i,j,k,n: integer;
+    f: TSynQueue;
+    u,v: RawUTF8;
+    savedint: TIntegerDynArray;
+    savedu: TRawUTF8DynArray;
+begin
+  f := TSynQueue.Create(TypeInfo(TIntegerDynArray));
+  try
+    for o := 1 to 1000 do begin
+      check(f.Count=0);
+      check(not f.Pending);
+      for i := 1 to o do
+        f.Push(i);
+      check(f.Pending);
+      check(f.Count=o);
+      check(f.Capacity>=o);
+      f.Save(savedint);
+      check(Length(savedint)=o);
+      for i := 1 to o do begin
+        j := -1;
+        check(f.Peek(j));
+        check(j=i);
+        j := -1;
+        check(f.Pop(j));
+        check(j=i);
+      end;
+      check(not f.Pending);
+      check(f.Count=0);
+      check(f.Capacity>0);
+      f.Clear; // ensure f.Pop(j) will use leading storage
+      check(not f.Pending);
+      check(f.Count=0);
+      check(f.Capacity=0);
+      check(Length(savedint)=o);
+      for i := 1 to o do
+        check(savedint[i-1]=i);
+      n := 0;
+      for i := 1 to o do
+        if i and 7=0 then begin
+          j := -1;
+          check(f.Pop(j));
+          check(j and 7<>0);
+          dec(n);
+        end else begin
+          f.Push(i);
+          inc(n);
+        end;
+      check(f.Count=n);
+      check(f.Pending);
+      f.Save(savedint);
+      check(Length(savedint)=n);
+      for i := 1 to n do
+        check(savedint[i-1] and 7<>0);
+      for i := 1 to n do begin
+        j := -1;
+        check(f.Peek(j));
+        k := -1;
+        check(f.Pop(k));
+        check(j=k);
+        check(j and 7<>0);
+      end;
+      check(f.Count=0);
+      check(f.Capacity>0);
+    end;
+  finally
+    f.Free;
+  end;
+  f := TSynQueue.Create(TypeInfo(TRawUTF8DynArray));
+  try
+    for o := 1 to 1000 do begin
+      check(not f.Pending);
+      check(f.Count=0);
+      f.Clear; // ensure f.Pop(j) will use leading storage
+      check(f.Count=0);
+      check(f.Capacity=0);
+      n := 0;
+      for i := 1 to o do
+        if i and 7=0 then begin
+          u := '7';
+          check(f.Pop(u));
+          check(GetInteger(pointer(u)) and 7<>0);
+          dec(n);
+        end else begin
+          u := UInt32ToUtf8(i);
+          f.Push(u);
+          inc(n);
+        end;
+      check(f.Pending);
+      check(f.Count=n);
+      f.Save(savedu);
+      check(Length(savedu)=n);
+      for i := 1 to n do
+        check(GetInteger(pointer(savedu[i-1])) and 7<>0);
+      for i := 1 to n do begin
+        u := '';
+        check(f.Peek(u));
+        v := '';
+        check(f.Pop(v));
+        check(u=v);
+        check(GetInteger(pointer(u)) and 7<>0);
+      end;
+      check(not f.Pending);
+      check(f.Count=0);
+      check(f.Capacity>0);
+    end;
+    check(Length(savedu)=length(savedint));
+  finally
+    f.Free;
   end;
 end;
 
@@ -6639,6 +6814,18 @@ begin
     J := ObjectToJSON(peop);
     Check(J='{"ID":-1234,"FirstName":"","LastName":"",'+
       '"Data":"","YearOfBirth":0,"YearOfDeath":0}');
+   {$ifndef NOVARIANTS}
+   peop.YearOfDeath := 10;
+   peop.LastName := 'john';
+   TObjectVariant.New(Va,peop);
+   Check(Va.id=-1234);
+   Check(Va.FirstName='');
+   Check(Va.LastName='john');
+   Check(Va.YearOfDeath=10);
+   J := VariantSaveJSON(Va);
+   check(J='{"ID":-1234,"FirstName":"","LastName":"john","Data":"",'+
+     '"YearOfBirth":0,"YearOfDeath":10}');
+   {$endif}
   finally
     peop.Free;
   end;
@@ -9541,19 +9728,19 @@ begin
   Value[16] := #$E7;
   Value[17] := #$E0;
   Check(not IsBase64(Value));
-  Check(Base64Encode(Value)=Value64);
+  Check(SockBase64Encode(Value)=Value64);
   Check(BinToBase64(Value)=Value64);
   Check(IsBase64(Value64));
   tmp := StringFromFile(ExeVersion.ProgramFileName);
-  b64 := Base64Encode(tmp);
+  b64 := SockBase64Encode(tmp);
   Check(IsBase64(b64));
-  Check(SynCrtSock.Base64Decode(b64)=tmp);
+  Check(SynCrtSock.SockBase64Decode(b64)=tmp);
   Check(BinToBase64(tmp)=b64);
   Check(Base64ToBin(b64)=tmp);
   tmp := '';
   for i := 1 to 1998 do begin
-    b64 := Base64Encode(tmp);
-    Check(SynCrtSock.Base64Decode(b64)=tmp);
+    b64 := SockBase64Encode(tmp);
+    Check(SynCrtSock.SockBase64Decode(b64)=tmp);
     Check((tmp='') or IsBase64(b64));
     Check(BinToBase64(tmp)=b64);
     Check(Base64ToBin(b64)=tmp);
@@ -9808,17 +9995,20 @@ begin
   // 1. Hash complete AnsiString
   SHA.Full(pointer(s),length(s),Digest);
   Check(CompareMem(@Digest,@TDig,sizeof(Digest)));
+  Check(IsEqual(Digest,TDig));
   // 2. one update call for all chars
   for i := 1 to length(s) do
     SHA.Update(@s[i],1);
   SHA.Final(Digest);
   Check(CompareMem(@Digest,@TDig,sizeof(Digest)));
+  Check(IsEqual(Digest,TDig));
   // 3. test consistency with Padlock engine down results
 {$ifdef USEPADLOCK}
   if not padlock_available then exit;
   padlock_available := false;  // force PadLock engine down
   SHA.Full(pointer(s),length(s),Digest);
   Check(CompareMem(@Digest,@TDig,sizeof(Digest)));
+  Check(IsEqual(Digest,TDig));
 {$ifdef PADLOCKDEBUG} write('=padlock '); {$endif}
   padlock_available := true; // restore previous value
 {$endif}
@@ -9902,7 +10092,7 @@ begin
   SingleTest('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq',D2);
   SHA256Weak('lagrangehommage',Digest.Lo); // test with len=256>64
   Check(IsEqual(Digest.Lo,D3));
-  Check(Comparemem(@Digest,@D3,sizeof(Digest.Lo)));
+  Check(CompareMem(@Digest,@D3,sizeof(Digest.Lo)));
   PBKDF2_HMAC_SHA256('password','salt',1,Digest.Lo);
   check(SHA256DigestToString(Digest.Lo)=
     '120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b');
@@ -10365,7 +10555,7 @@ end;
 type
   TBenchmark = (
     // non cryptographic hashes
-    bCRC32c, bXXHash32, 
+    bCRC32c, bXXHash32,
     // cryptographic hashes
     bMD5, bSHA1, bHMACSHA1, bSHA256, bHMACSHA256, bSHA512, bHMACSHA512,
     bSHA3_256, bSHA3_512,
@@ -11404,7 +11594,7 @@ var S: RawByteString;
     i,j: integer;
 //    E: RawByteString; i,L,n: integer;
 begin
-{  S := Base64Encode(CompressString(StringFromFile('d:\temp\tmpCurve.emf')));
+{  S := SockBase64Encode(CompressString(StringFromFile('d:\temp\tmpCurve.emf')));
   E := '  EMF: RawByteString = // some compressed simple EMF file'#13#10;
   L := length(S);
   i := 1;
@@ -11596,7 +11786,7 @@ end;
 var
   SoundexValues: array[0..5] of RawUTF8;
   Names: TRawUTF8DynArray;
-  i1,i2: integer;
+  i,i1,i2: integer;
   Res: Int64;
   id: TID;
   password, s: RawUTF8;
@@ -11734,6 +11924,11 @@ begin
   Check(Names[0]='People');
   Demo.Execute('SELECT Concat(FirstName," and ") FROM People WHERE LastName="Einstein"',s);
   Check(Hash32(s)=$68A74D8E,'Albert1 and Albert1 and Albert2 and Albert3 and ...');
+  i1 := Demo.Execute('SELECT FirstName from People WHERE FirstName like "%eona%"',Names);
+  check(i1=2002,'like/strcspn');
+  check(Names[i1]='');
+  for i := 0 to i1-1 do
+    check(PosEx('eona',Names[i])>0);
 end;
 
 procedure TTestSQLite3Engine.VirtualTableDirectAccess;
@@ -11970,6 +12165,54 @@ end;
 procedure TTestSQLite3Engine._TRecordVersion;
 begin
   TestMasterSlaveRecordVersion(self,'.db3');
+end;
+
+procedure TTestMemoryBased._TSQLTableWritable;
+  procedure Test(intern: TRawUTF8Interning);
+  var s1,s2: TSQLTableJSON;
+      w: TSQLTableWritable;
+      f,r: integer;
+  begin
+    s1 := TSQLTableJSON.CreateFromTables([TSQLRecordPeople],'',JS);
+    s2 := TSQLTableJSON.CreateFromTables([TSQLRecordPeople],'',JS);
+    w := TSQLTableWritable.CreateFromTables([TSQLRecordPeople],'',JS);
+    try // merge the same data twice, and validate duplicated columns
+      w.NewValuesInterning := intern;
+      check(w.RowCount=s1.RowCount);
+      check(w.FieldCount=s1.FieldCount);
+      w.Join(s2,'rowid','ID'); // s2 will be sorted -> keep s1 untouched
+      check(w.RowCount=s1.RowCount);
+      check(w.FieldCount=s1.FieldCount*2-1);
+      for f := 0 to s1.FieldCount-1 do begin
+        check(w.FieldIndex(s1.FieldNames[f])=f);
+        if f>0 then // f=0='ID' is not duplicated
+          check(w.FieldIndex(s1.FieldNames[f]+'2')=f+s1.FieldCount-1);
+      end;
+      for r := 1 to w.RowCount do begin
+        for f := 0 to s1.FieldCount-1 do begin
+          check(StrComp(s1.Get(r,f),w.Get(r,f))=0);
+          if f>0 then
+            check(StrComp(s1.Get(r,f),w.Get(r,f+s1.FieldCount-1))=0);
+        end;
+      end;
+      if intern<>nil then
+        check(intern.Count=0);
+      for r := 0 to w.RowCount do
+        w.Update(r,1,UInt32ToUTF8(r and 127));
+      for r := 1 to w.RowCount do
+        check(w.GetAsInteger(r,1)=r and 127);
+      if intern<>nil then
+        check(intern.Count=128);
+    finally
+      s1.Free;
+      s2.Free;
+      w.Free;
+      intern.Free;
+    end;
+  end;
+begin
+  Test(nil);
+  Test(TRawUTF8Interning.Create);
 end;
 
 type
@@ -14707,27 +14950,27 @@ begin
   try
     J.SetFieldType('YearOfBirth',sftModTime);
     if JS<>'' then // avoid memory leak
-    with TSQLTableDB.Create(Demo,[],Req,true) do
-    try
-      Check(RowCount=J.RowCount);
-      Check(FieldCount=J.FieldCount);
-      SetFieldType('YearOfBirth',sftModTime);
-      for aR := 0 to RowCount do
-        for aF := 0 to FieldCount-1 do
-         if (aR>0) and (aF=3) then  // aF=3=Blob
-           Check(GetBlob(aR,aF)=J.GetBlob(aR,aF)) else begin
-           Check((GetW(aR,aF)=J.GetW(aR,aF)) and
-                (GetA(aR,aF)=J.GetA(aR,aF)) and
-                (length(GetW(aR,aF))shr 1=LengthW(aR,aF)),
-                Format('Get() in Row=%d Field=%d',[aR,aF]));
-            if (aR>0) and (aF>3) then begin
-              Check(GetDateTime(aR,af)=J.GetDateTime(aR,aF));
-              Check(GetAsDateTime(aR,af)=J.GetAsDateTime(aR,aF));
+      with TSQLTableDB.Create(Demo,[],Req,true) do
+      try
+        Check(RowCount=J.RowCount);
+        Check(FieldCount=J.FieldCount);
+        SetFieldType('YearOfBirth',sftModTime);
+        for aR := 0 to RowCount do
+          for aF := 0 to FieldCount-1 do
+           if (aR>0) and (aF=3) then  // aF=3=Blob
+             Check(GetBlob(aR,aF)=J.GetBlob(aR,aF)) else begin
+             Check((GetW(aR,aF)=J.GetW(aR,aF)) and
+                  (GetA(aR,aF)=J.GetA(aR,aF)) and
+                  (length(GetW(aR,aF))shr 1=LengthW(aR,aF)),
+                  Format('Get() in Row=%d Field=%d',[aR,aF]));
+              if (aR>0) and (aF>3) then begin
+                Check(GetDateTime(aR,af)=J.GetDateTime(aR,aF));
+                Check(GetAsDateTime(aR,af)=J.GetAsDateTime(aR,aF));
+              end;
             end;
-          end;
-    finally
-      Free;
-    end;
+      finally
+        Free;
+      end;
     Demo.Execute('VACUUM;');
     with TSQLTableDB.Create(Demo,[],Req,true) do // re-test after VACCUM
     try
@@ -14842,6 +15085,15 @@ begin
   finally
     J.Free;
   end;
+  if false then
+    with TSQLTableDB.Create(Demo,[TSQLRecordPeople],
+      'select id,FirstName,LastName,YearOfBirth,YearOfDeath from people',true) do
+    try
+      FileFromString(GetODSDocument(false),'false.ods');
+      FileFromString(GetODSDocument(true),'true.ods');
+    finally
+      Free;
+    end;
 end;
 
 {$ifdef UNICODE}
@@ -16049,7 +16301,7 @@ begin
     FillCharFast(Inst,sizeof(Inst),0); // all Expected..ID=0
     HTTPClient := TSQLHttpClient.Create('127.0.0.1',HTTP_DEFAULTPORT,fModel);
     try
-      HTTPClient.ServicePublishOwnInterfaces(fClient.Server); 
+      HTTPClient.ServicePublishOwnInterfaces(fClient.Server);
       //HTTPClient.OnIdle := TLoginForm.OnIdleProcess; // from mORMotUILogin
       // HTTPClient.Compression := [hcSynShaAes]; // 350ms (300ms for [])
       Check(HTTPClient.SetUser('User','synopse'));

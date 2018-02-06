@@ -48,7 +48,7 @@ unit SynSQLite3;
   ***** END LICENSE BLOCK *****
 
 
-       SQLite3 3.21.0 database engine
+       SQLite3 3.22.0 database engine
       ********************************
 
      Brand new SQLite3 library to be used with Delphi
@@ -136,7 +136,7 @@ unit SynSQLite3;
   - moved all static .obj code into new SynSQLite3Static unit
   - allow either static .obj use via SynSQLite3Static or external .dll linking
     using TSQLite3LibraryDynamic to bind all APIs to the global sqlite3 variable
-  - updated SQLite3 engine to latest version 3.21.0
+  - updated SQLite3 engine to latest version 3.22.0
   - fixed: internal result cache is now case-sensitive for its SQL key values
   - raise an ESQLite3Exception if DBOpen method is called twice
   - added TSQLite3ErrorCode enumeration and sqlite3_resultToErrorCode()
@@ -1291,7 +1291,7 @@ type
     close: function(DB: TSQLite3DB): integer; {$ifndef SQLITE3_FASTCALL}cdecl;{$endif}
 
     /// Return the version of the SQLite database engine, in ascii format
-    // - currently returns '3.21.0', when used with our SynSQLite3Static unit
+    // - currently returns '3.22.0', when used with our SynSQLite3Static unit
     // - if an external SQLite3 library is used, version may vary
     // - you may use the VersionText property (or Version for full details) instead
     libversion: function: PUTF8Char; {$ifndef SQLITE3_FASTCALL}cdecl;{$endif}
@@ -3963,13 +3963,16 @@ end;
 
 procedure TSQLDataBase.ExecuteAll(const aSQL: RawUTF8);
 var R: TSQLRequest;
+{$ifdef WITHLOG} log: ISynLog; {$endif}
 begin
   if self=nil then
     exit; // avoid GPF in case of call from a static-only server
   {$ifdef WITHLOG}
-  if SQLShouldBeLogged(aSQL) then
-    fLog.Enter(self).Log(sllSQL,aSQL,self,4096);
+  if SQLShouldBeLogged(aSQL) then begin
+    log := fLog.Enter(self{$ifndef DELPHI5OROLDER},'ExecuteAll'{$endif});
+    log.Log(sllSQL,aSQL,self,4096);
   {$endif}
+  end;
   LockAndFlushCache; // don't trust aSQL -> assume modify -> inc(InternalState^)
   try
     R.ExecuteAll(DB,aSQl);
@@ -3998,15 +4001,18 @@ end;
 
 function TSQLDataBase.Execute(const aSQL: RawUTF8; var ID: TInt64DynArray): integer;
 var R: TSQLRequest;
+{$ifdef WITHLOG} log: ISynLog; {$endif}
 begin
   if self=nil then begin
     result := 0;
     exit; // avoid GPF in case of call from a static-only server
   end;
-{$ifdef WITHLOG}
-  if SQLShouldBeLogged(aSQL) then
-    fLog.Enter(self).Log(sllSQL,aSQL,self,2048);
-{$endif}
+  {$ifdef WITHLOG}
+  if SQLShouldBeLogged(aSQL) then begin
+    log := fLog.Enter(self{$ifndef DELPHI5OROLDER},'Execute'{$endif});
+    log.Log(sllSQL,aSQL,self,2048);
+  end;
+  {$endif}
   Lock(aSQL);
   try
     result := R.Execute(DB,aSQL,ID);
@@ -4559,8 +4565,12 @@ begin
   for i := 0 to fSQLFunctions.Count-1 do
     TSQLDataBaseSQLFunction(fSQLFunctions.List[i]).CreateFunction(DB);
   {$ifdef WITHLOG}
-  FPCLog.Log(sllDB,'"%" database file of % opened with PageSize=% and CacheSize=%',
-    [FileName,KB(GetFileSize),PageSize,CacheSize],self);
+  i := CacheSize;
+  if i<0 then
+    i := (-i) shr 10 else
+    i := PageSize*CacheSize;
+  FPCLog.Log(sllDB,'"%" database file of % opened with PageSize=% and CacheSize=% (%)',
+    [FileName,KB(GetFileSize),PageSize,CacheSize,KB(i)],self);
   {$endif}
 end;
 
@@ -4586,7 +4596,7 @@ end;
 
 function TSQLDataBase.GetPageSize: cardinal;
 begin
-  if fPageSize=0 then // can be cached, since known change once opened
+  if fPageSize=0 then // can be cached, since not change once opened
     fPageSize := ExecuteNoExceptionInt64('PRAGMA page_size');
   result := fPageSize;
 end;
@@ -4942,6 +4952,7 @@ begin
         inc(result);
       end;
     until res=SQLITE_DONE;
+    SetLength(Values,LValues);
   finally
     Close; // always release statement
   end;
@@ -5603,8 +5614,11 @@ begin
         case res of
         SQLITE_OK:
           NotifyProgressAndContinue(backupStepOk);
-        SQLITE_BUSY:
+        SQLITE_BUSY: begin
           NotifyProgressAndContinue(backupStepBusy);
+          if fStepSleepMS=0 then
+            SleepHiRes(1);
+        end;
         SQLITE_LOCKED:
           NotifyProgressAndContinue(backupStepLocked);
         SQLITE_DONE:
@@ -5778,8 +5792,8 @@ begin
   if fHandle=0 then
   {$else}
     {$ifdef BSDNOTDARWIN}
-    fHandle := dlopen(PChar(LibraryName),0);
-    if fHandle=nil then
+    fHandle := TLibHandle(dlopen(PChar(LibraryName),0));
+    if fHandle=TLibHandle(nil) then
     {$else}
     fHandle := LoadLibrary({$ifndef FPC}pointer{$endif}(LibraryName));
     if fHandle=0 then
@@ -5796,7 +5810,7 @@ begin
      not Assigned(prepare_v2) or not Assigned(create_module_v2) then begin
     {$ifdef BSDNOTDARWIN}
     dlclose(fHandle);
-    fHandle := nil;
+    fHandle := TLibHandle(nil);
     {$else}
     FreeLibrary(fHandle);
     fHandle := 0;
@@ -5812,7 +5826,7 @@ end;
 destructor TSQLite3LibraryDynamic.Destroy;
 begin
   {$ifdef BSDNOTDARWIN}
-  if fHandle<>nil then
+  if fHandle<>TLibHandle(nil) then
     dlclose(fHandle);
   {$else}
   if fHandle<>0 then

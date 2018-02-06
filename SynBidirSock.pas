@@ -188,15 +188,15 @@ type
     /// this method is called when the instance is connected to a poll
     // - default implementation will set fLastOperation content
     procedure AfterCreate(Sender: TAsynchConnections); virtual;
-    /// this method is called when the some input data is pending on the socket 
+    /// this method is called when the some input data is pending on the socket
     // - should extract frames or requests from fSlot.readbuf, and handle them
     // - this is where the input should be parsed and extracted according to
     // the implemented procotol
     // - Sender.Write() could be used for asynchronous answer sending
-    // - Sender.LogVerbose() allows logging of escaped data 
+    // - Sender.LogVerbose() allows logging of escaped data
     // - could return sorClose to shutdown the socket, e.g. on parsing error
     function OnRead(Sender: TAsynchConnections): TPollAsynchSocketOnRead; virtual; abstract;
-    /// this method is called when some data has been written to the socket 
+    /// this method is called when some data has been written to the socket
     // - default implementation will do nothing
     procedure AfterWrite(Sender: TAsynchConnections); virtual;
     /// this method is called when the instance is about to be deleted from a poll
@@ -788,7 +788,7 @@ type
     // - defaut is 30000, i.e. 30 seconds
     CallbackAnswerTimeOutMS: cardinal;
     /// callback run when a WebSockets client is just connected
-    // - triggerred by TWebSocketProcess.ProcessStart 
+    // - triggerred by TWebSocketProcess.ProcessStart
     OnClientConnected: TNotifyEvent;
     /// callback run when a WebSockets client is just disconnected
     // - triggerred by TWebSocketProcess.ProcessStop
@@ -805,7 +805,7 @@ type
     // - used only if WebSocketLog global variable is set
     procedure SetFullLog;
   end;
-                              
+
   /// points to parameters to be used for WebSockets process
   // - using a pointer/reference type will allow in-place modification of
   // any TWebSocketProcess.Settings, TWebSocketServer.Settings or
@@ -987,11 +987,12 @@ type
     // - note that this constructor will not register any protocol, so is
     // useless until you execute Protocols.Add()
     // - in the current implementation, the ServerThreadPoolCount parameter will
-    // be ignored, and two threads will handle shortliving HTTP/1.0
-    // "connection: close" requests, and one thread will be maintained per
-    // keep-alive/websockets client
+    // use two threads by default to handle shortliving HTTP/1.0 "connection: close"
+    // requests, and one thread will be maintained per keep-alive/websockets client
+    // - by design, the KeepAliveTimeOut=0 value is ignored with this server
     constructor Create(const aPort: SockString; OnStart,OnStop: TNotifyThreadEvent;
-      const ProcessName: SockString; ServerThreadPoolCount: integer=0); override;
+      const ProcessName: SockString; ServerThreadPoolCount: integer=2;
+      KeepAliveTimeOut: integer=3000); override;
     /// close the server
     destructor Destroy; override;
     /// will send a given frame to all connected clients
@@ -1066,7 +1067,7 @@ function ToText(opcode: TWebSocketFrameOpCode): PShortString; overload;
 type
   {$M+}
   THttpClientWebSockets = class;
-  TWebSocketProcessClientThread = class;        
+  TWebSocketProcessClientThread = class;
   {$M-}
 
   /// implements WebSockets process as used on client side
@@ -1755,6 +1756,8 @@ function TWebSocketProtocolJSON.FrameDecompress(
   var contentType,content: RawByteString): Boolean;
 var i: Integer;
     P: PUTF8Char;
+    b64: PUTF8Char;
+    b64len: integer;
   procedure GetNext(var content: RawByteString);
   var txt: PUTF8Char;
       txtlen: integer;
@@ -1775,14 +1778,14 @@ begin
   GetNext(contentType);
   if P=nil then
     exit;
-  if (contentType='') or
-     IdemPropNameU(contentType,JSON_CONTENT_TYPE) then
-    GetJSONItemAsRawJSON(P,RawJSON(content)) else begin
-    GetNext(content);
-    if not IdemPChar(pointer(contentType),'TEXT/') then
-      if not Base64MagicCheckAndDecode(pointer(content),length(content),content) then
+  if (contentType='') or IdemPropNameU(contentType,JSON_CONTENT_TYPE) then
+    GetJSONItemAsRawJSON(P,RawJSON(content)) else
+    if IdemPChar(pointer(contentType),'TEXT/') then
+      GetNext(content) else begin
+      b64 := GetJSONField(P,P,nil,nil,@b64len);
+      if not Base64MagicCheckAndDecode(b64,b64len,content) then
         exit;
-  end;
+    end;
   result := true;
 end;
 
@@ -2258,7 +2261,7 @@ var frame: TWebSocketFrame;
     timeout: Int64;
     log: ISynLog;
 begin
-  log := WebSocketLog.Enter(self);
+  log := WebSocketLog.Enter(self{$ifndef DELPHI5OROLDER},'Destroy'{$endif});
   if (fState<>wpsClose) and not fNoConnectionCloseAtDestroy then
     try
       InterlockedIncrement(fProcessCount);
@@ -2788,7 +2791,7 @@ end;
 { TWebSocketServer }
 
 constructor TWebSocketServer.Create(const aPort: SockString; OnStart,OnStop: TNotifyThreadEvent;
-  const ProcessName: SockString; ServerThreadPoolCount: integer);
+  const ProcessName: SockString; ServerThreadPoolCount, KeepAliveTimeOut: integer);
 begin
   fThreadRespClass := TWebSocketServerResp;
   fWebSocketConnections := TObjectListLocked.Create(false);
@@ -2796,7 +2799,7 @@ begin
   fSettings.SetDefaults;
   fSettings.HeartbeatDelay := 20000;
   fCanNotifyCallback := true;
-  inherited Create(aPort,OnStart,OnStop,ProcessName,2); // 2 threads for HTTP/1.0
+  inherited Create(aPort,OnStart,OnStop,ProcessName,ServerThreadPoolCount,KeepAliveTimeOut);
 end;
 
 function TWebSocketServer.WebSocketProcessUpgrade(ClientSock: THttpServerSocket;
@@ -3137,7 +3140,7 @@ begin
       ComputeChallenge(bin1,digest1);
       bin2 := HeaderValue('Sec-WebSocket-Accept');
       if not Base64ToBin(pointer(bin2),@digest2,length(bin2),sizeof(digest2),false) or
-         not CompareMem(@digest1,@digest2,SizeOf(digest1)) then
+         not IsEqual(digest1,digest2) then
         exit;
       if extout<>'' then begin
         result := 'Invalid HTTP Upgrade ProcessHandshake';
@@ -3602,7 +3605,7 @@ begin
       if fConnection[i].fLastOperation<allowed then
       try
         if log=nil then
-          log := fLog.Enter(self);
+          log := fLog.Enter(self{$ifndef DELPHI5OROLDER},'IdleEverySecond'{$endif});
         fConnection[i].OnLastOperationIdle(self);
         inc(n);
       except

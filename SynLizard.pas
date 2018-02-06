@@ -276,7 +276,7 @@ type
     // - if there is a local Lizard1-32.dll/Lizard1-64.dll file, try to load it
     class function AlgoRegister: boolean;
     /// set to TRUE if Create successed
-    // - may be used if aRaiseNoException parameter has been defined  
+    // - may be used if aRaiseNoException parameter has been defined
     property Loaded: boolean read fLoaded;
     /// the loaded library file name
     property LibraryName: TFileName read fLibraryName;
@@ -313,7 +313,7 @@ implementation
 
 {$ifndef LIZARD_EXTERNALONLY}
 
-function Lizard_versionNumber: integer; cdecl; external; 
+function Lizard_versionNumber: integer; cdecl; external;
 function Lizard_compressBound(inputSize: integer): integer; cdecl; external;
 function Lizard_compress(src, dst: pointer; srcSize, maxDstSize, compressionLevel: integer): integer; cdecl; external;
 function Lizard_sizeofState(compressionLevel: integer): integer; cdecl; external;
@@ -550,8 +550,8 @@ begin
   if fHandle=0 then
   {$else}
     {$ifdef BSDNOTDARWIN}
-    fHandle := dlopen(PChar(fLibraryName),0);
-    if fHandle=nil then
+    fHandle := TLibHandle(dlopen(PChar(fLibraryName),0));
+    if fHandle=TLibHandle(nil) then
     {$else}
     fHandle := LoadLibrary({$ifndef FPC}pointer{$endif}(fLibraryName));
     if fHandle=0 then
@@ -587,7 +587,7 @@ end;
 destructor TSynLizardDynamic.Destroy;
 begin
   {$ifdef BSDNOTDARWIN}
-  if fHandle<>nil then
+  if fHandle<>TLibHandle(nil) then
     dlclose(fHandle);
   {$else}
   if fHandle<>0 then

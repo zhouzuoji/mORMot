@@ -389,7 +389,7 @@ type
     ColumnPrecision: PtrInt;
     /// the Column data scale
     // - used e.g. for numerical values
-    // - may be -1 if the metadata SQL statement returned NULL 
+    // - may be -1 if the metadata SQL statement returned NULL
     ColumnScale: PtrInt;
     /// the Column type, as recognized by our SynDB classes
     // - should not be ftUnknown nor ftNull
@@ -453,7 +453,7 @@ type
     ColumnPrecision: PtrInt;
     /// the Column data scale
     // - used e.g. for numerical values
-    // - may be -1 if the metadata SQL statement returned NULL 
+    // - may be -1 if the metadata SQL statement returned NULL
     ColumnScale: PtrInt;
     /// the Column type, as recognized by our SynDB classes
     // - should not be ftUnknown nor ftNull
@@ -635,7 +635,7 @@ type
     // (0 means BLOB kind of TEXT column)
     function ColumnType(Col: integer; FieldSize: PInteger=nil): TSQLDBFieldType;
     /// returns TRUE if the column contains NULL
-    function ColumnNull(Col: integer): boolean; 
+    function ColumnNull(Col: integer): boolean;
     /// return a Column integer value of the current Row, first Col is 0
     function ColumnInt(Col: integer): Int64; overload;
     /// return a Column floating point value of the current Row, first Col is 0
@@ -745,7 +745,7 @@ type
     /// create a TDocVariant custom variant containing all columns values
     // - will create a "fast" TDocVariant object instance with all fields
     procedure RowDocVariant(out aDocument: variant;
-      aOptions: TDocVariantOptions=JSON_OPTIONS_FAST); 
+      aOptions: TDocVariantOptions=JSON_OPTIONS_FAST);
     {$endif DELPHI5OROLDER}
     {$endif LVCL}
     /// return the associated statement instance
@@ -2448,6 +2448,8 @@ type
   // this type can be used to implement a generic parameter
   // - used e.g. by TSQLDBStatementWithParams as a dynamic array
   // (and its inherited TSQLDBOracleStatement)
+  // - don't change this structure, since it will be serialized as binary
+  // for TSQLDBProxyConnectionCommandExecute
   TSQLDBParam = packed record
     /// storage used for TEXT (ftUTF8) and BLOB (ftBlob) values
     // - ftBlob are stored as RawByteString
@@ -2466,10 +2468,6 @@ type
     VInOut: TSQLDBParamInOutType;
     /// used e.g. by TSQLDBOracleStatement
     VDBType: word;
-    {$ifdef CPU64}
-    // so that VInt64 will be 8 bytes aligned
-    VFill: cardinal;
-    {$endif}
     /// storage used for ftInt64, ftDouble, ftDate and ftCurrency value
     VInt64: Int64;
   end;
@@ -2893,7 +2891,7 @@ type
       DataRowPosition: PCardinalDynArray=nil): cardinal; override;
     /// gets a number of updates made by latest executed statement
     // - this overriden method will return the integer value returned by
-    // cExecute command 
+    // cExecute command
     function UpdateCount: integer; override;
     /// force no UpdateCount method call on server side
     // - may be needed to reduce server load, if this information is not needed
@@ -3248,7 +3246,6 @@ type
     procedure First;
     /// after successfull Open and First, go the the next row of results
     procedure Next;
-    { procedure Last;  BUGGY method -> use ORDER DESC instead }
     /// end the SQL query
     // - will release the SQL statement, results and bound parameters
     // - the query should be released with a call to Close before reopen
@@ -3367,7 +3364,7 @@ const
    ' TIMESTAMP',' TEXT',' BYTEA'),
     // like SQLite3, we will create TEXT column instead of VARCHAR(%), as stated
     // by http://www.postgresql.org/docs/current/static/datatype-character.html
-   
+
   // dDB2 (for CCSID Unicode tables)
   (' int',' varchar(%)',' bigint',' real',' decimal(19,4)',' timestamp',' clob', ' blob'),
     { note: bigint needs 9.1 and up }
@@ -3472,7 +3469,7 @@ begin
 end;
 
 {$ifdef WITH_PROXY}
-function ToText(cmd: TSQLDBProxyConnectionCommand): PShortString; 
+function ToText(cmd: TSQLDBProxyConnectionCommand): PShortString;
 begin
   result := GetEnumName(TypeInfo(TSQLDBProxyConnectionCommand),ord(cmd));
 end;
@@ -3948,22 +3945,6 @@ begin
   end;
 end;
 
-{
-procedure TQuery.Last;
-var i: integer;
-begin
-  if (self=nil) or (fPrepared=nil) then
-    raise ESQLQueryException.Create('Next: Invalid call');
-  while fPrepared.Step(false) do begin
-    inc(fRowIndex);
-    for i := 0 to fPrepared.ColumnCount-1 do begin
-      fPrepared.ColumnToVariant(i,fResults[i].fValue);
-      fResults[i].fRowIndex := fRowIndex;
-    end;
-  end;
-end;
-}
-
 procedure TQuery.Open;
 var i, h: integer;
     added: boolean;
@@ -3984,9 +3965,9 @@ begin
       fName := ColumnName;
     end;
   end;
-  assert(fResultCount=fPrepared.ColumnCount);
-  // always read the first row
-  First;
+  if fResultCount<>fPrepared.ColumnCount then
+    raise ESQLQueryException.CreateUTF8('%.Open count %<>%',[self,fResultCount,fPrepared.ColumnCount]);
+  First; // always read the first row
 end;
 
 function TQuery.ParamByName(const aParamName: string;
@@ -4866,7 +4847,7 @@ function TSQLDBConnectionProperties.SharedTransaction(SessionID: cardinal;
         '%.SharedTransaction(sessionID=%) with mixed thread connections: % and %',
           [self,SessionID,result,fSharedTransactions[index].Connection]);
   end;
-  
+
 var i,n: integer;
 begin
   n := Length(fSharedTransactions);
@@ -5422,7 +5403,7 @@ begin
       SetSchemaNameToOwner(Owner);
     end
     else if fDBMS=dMSSQL then
-      Split(ProcName, ';', ProcName); // discard ;1 when MSSQL stored procedure name is ProcName;1 
+      Split(ProcName, ';', ProcName); // discard ;1 when MSSQL stored procedure name is ProcName;1
   end;
   end;
 end;
@@ -6802,7 +6783,6 @@ end;
 
 constructor TSQLDBStatement.Create(aConnection: TSQLDBConnection);
 begin
-  // SynDBLog.Enter(self);
   inherited Create;
   fConnection := aConnection;
   fStripSemicolon := true;
@@ -7901,7 +7881,7 @@ begin
         VarRecToUTF8(aValues[i],VArray[fParamsArrayCount]);
         case VType of
         ftUTF8:
-          if (VArray[fParamsArrayCount]='') and (fConnection<>nil) and 
+          if (VArray[fParamsArrayCount]='') and (fConnection<>nil) and
              fConnection.Properties.StoreVoidStringAsNull then
           VArray[fParamsArrayCount] := 'null' else
           VArray[fParamsArrayCount] := QuotedStr(VArray[fParamsArrayCount]);
@@ -8743,7 +8723,6 @@ const
 
 initialization
   assert(SizeOf(TSQLDBColumnProperty)=sizeof(PTrUInt)*2+20);
-  assert(SizeOf(TSQLDBParam)=sizeof(PTrUInt)*3+sizeof(Int64));
   {$ifndef ISDELPHI2010}
   TTextWriter.RegisterCustomJSONSerializerFromTextSimpleType(TypeInfo(TSQLDBFieldType));
   TTextWriter.RegisterCustomJSONSerializerFromText(

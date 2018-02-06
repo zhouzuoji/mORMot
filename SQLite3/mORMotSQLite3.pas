@@ -205,7 +205,7 @@ unit mORMotSQLite3;
 
     Version 1.18
     - unit SQLite3.pas renamed mORMotSQLite3.pas
-    - updated SQLite3 engine to latest version 3.21.0
+    - updated SQLite3 engine to latest version 3.22.0
     - BATCH adding in TSQLRestServerDB will now perform SQLite3 multi-INSERT
       statements: performance boost is from 2x (mem with transaction) to 60x
       (full w/out transaction) - faster than SQlite3 as external DB
@@ -817,7 +817,7 @@ end;
 procedure TSQLRestServerDB.GetAndPrepareStatementRelease(E: Exception; const Msg: RawUTF8);
 var
   tmp: TSynTempBuffer;
-  P: PAnsiChar; 
+  P: PAnsiChar;
 begin
   try
     if fStatementTimer<>nil then begin
@@ -890,7 +890,7 @@ begin
   SQL := Props.SQLTableName;
   if fBatchMethod<>mNone then begin
     result := 0; // indicates error
-    if SentData='' then 
+    if SentData='' then
       InternalLog('BATCH with MainEngineAdd(%,SentData="") -> '+
         'DEFAULT VALUES not implemented',[SQL],sllError) else
     if (fBatchMethod=mPOST) and (fBatchIDMax>=0) and
@@ -1135,7 +1135,7 @@ var i: integer;
 {$ifdef WITHLOG}
     Log: ISynLog;
 begin
-  Log := fLogClass.Enter(self);
+  Log := fLogClass.Enter(self, 'Destroy');
 {$else}
 begin
 {$endif}
@@ -2678,7 +2678,7 @@ begin
     mask[i] := '*';
   end else
     mask := fShardRootFileName+'*.dbs';
-  db := FindFiles(ExtractFilePath(mask),ExtractFileName(mask),'',true); // sorted = true
+  db := FindFiles(ExtractFilePath(mask),ExtractFileName(mask),'',{sorted=}true); 
   if db=nil then
     exit; // no existing data
   fShardOffset := -1;
@@ -2712,8 +2712,6 @@ begin
   if fShardLastID<0 then
     fShardLastID := 0; // no data yet
 end;
-
-
 
 
 function RegisterVirtualTableModule(aModule: TSQLVirtualTableClass; aDatabase: TSQLDataBase): TSQLVirtualTableModule;
